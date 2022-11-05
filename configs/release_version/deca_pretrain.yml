@@ -1,0 +1,21 @@
+output_dir: "/pretrain"
+pretrained_modelpath: ''
+dataset:
+  batch_size: 64
+  K: 1
+loss:
+  photo: 0.
+  id: 0.
+  useSeg: False
+  reg_tex: 0.
+  reg_light: 0.
+  shape_consistency: False
+train:
+  resume: True
+  max_epochs: 10
+  max_steps: 100000
+  log_steps: 10
+  vis_steps: 500
+  checkpoint_steps: 1000
+  val_steps: 500
+  eval_steps: 1000
