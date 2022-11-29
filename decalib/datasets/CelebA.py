@@ -2,6 +2,8 @@ import torch
 import cv2
 import csv
 import torchvision.transforms.functional as tf
+from skimage.io import imread
+from skimage.transform import estimate_transform, warp
 from torchvision.transforms import Normalize
 import numpy as np
 import pickle
@@ -95,7 +97,7 @@ right_mouth = [54]
 
 class CelebDataset(torch.utils.data.Dataset):
 
-    def __init__(self, device, train, height, width, scale, landmark_file=False, test_mode=False,
+    def __init__(self, device, train, height, width, scale,trans_scale = 0, landmark_file=False, test_mode=False,
                  occloss_mode=False, is_use_aug=True, bfm_folder='BFM'):
         super(CelebDataset, self)
         self.test_mode = test_mode
@@ -103,6 +105,7 @@ class CelebDataset(torch.utils.data.Dataset):
         self.is_occ_mode = occloss_mode
         # Set is_use_aug as True if data augmentation is required during training.
         self.use_aug = is_use_aug
+        self.trans_scale = trans_scale
         self.root = 'image_root/Data/Dataset/'
 
         # Get landmark files
@@ -145,6 +148,11 @@ class CelebDataset(torch.utils.data.Dataset):
         else:
             print('Image does not exist: ' + filename)
 
+        image = imread(filename) / 255.
+        if len(image.shape) < 3:
+            image = np.tile(image[:, :, None], 3)
+
+
         raw_img = Image.open(filename).convert('RGB')
         _, H = raw_img.size
         raw_lm = np.reshape(np.asarray(landmark_cpu), (-1, 2)).astype(np.float32)
@@ -163,15 +171,23 @@ class CelebDataset(torch.utils.data.Dataset):
 
         _, H = img.size
         transform = get_transform()
-        img_tensor = transform(img).to(self.device)
+
+        tform = self.crop(image, lm)
+
+        cropped_image = warp(image, tform.inverse, output_shape=(self.width, self.height))
+        cropped_kpt = np.dot(tform.params,np.hstack([raw_lm, np.ones([raw_lm.shape[0], 1])]).T).T  # np.linalg.inv(tform.params)
+
+        # normalized kpt
+        cropped_kpt[:, :2] = cropped_kpt[:, :2] / self.width * 2 - 1 #image_size
+
+        img_tensor = torch.from_numpy(cropped_image.transpose(2,0,1)).type(dtype = torch.float32) #224,224,3
 
         lm = np.stack([lm[:, 0], H - lm[:, 1]], 1)
-        lm_tensor = parse_label(lm.T).to(self.device)
+        lm_tensor = torch.from_numpy(cropped_kpt).type(dtype = torch.float32) #224,224,3
 
         if self.test_mode:
             # Get GT masks for testing
-            skin_vis_mask_path = filename.replace('.bmp', '.jpg').replace('.png', '.jpg').replace('.jpg',
-                                                                                                  '_visible_skin_mask.png')
+            skin_vis_mask_path = filename.replace('.bmp', '.jpg').replace('.png', '.jpg').replace('.jpg', '_visible_skin_mask.png')
             if os.path.exists(skin_vis_mask_path):
                 raw_gtmask = Image.open(skin_vis_mask_path)
                 _, gt_mask, _, _ = align_img(raw_gtmask, raw_lm, self.lm3d_std, mask=None)
@@ -182,14 +198,14 @@ class CelebDataset(torch.utils.data.Dataset):
             data_dict = {
                 'image': img_tensor,
                 'landmark': lm_tensor,
-                #'mask': gt_mask_tensor
+                'mask': gt_mask_tensor
             }
             return data_dict
 
         data_dict = {
             'image': img_tensor,
             'landmark': lm_tensor,
-             'mask': img_tensor #TODO
+            'mask': img_tensor #TODO
         }
         return data_dict
 
@@ -200,3 +216,30 @@ class CelebDataset(torch.utils.data.Dataset):
         if msk is not None:
             msk = apply_img_affine(msk, affine_inv, method=Image.BILINEAR)
         return img, lm, msk
+
+    def crop(self, image, kpt):
+        left = np.min(kpt[:, 0]);
+        right = np.max(kpt[:, 0]);
+        top = np.min(kpt[:, 1]);
+        bottom = np.max(kpt[:, 1])
+
+        h, w, _ = image.shape
+        old_size = (right - left + bottom - top) / 2
+        center = np.array([right - (right - left) / 2.0, bottom - (bottom - top) / 2.0])  # + old_size*0.1])
+        trans_scale = (np.random.rand(2) * 2 - 1) * self.trans_scale
+        center = center + trans_scale * old_size  # 0.5
+
+        scale = np.random.rand() * (self.scale[1] - self.scale[0]) + self.scale[0]
+
+        size = int(old_size * scale)
+
+        # crop image
+        # src_pts = np.array([[center[0]-size/2, center[1]-size/2], [center[0] - size/2, center[1]+size/2], [center[0]+size/2, center[1]-size/2]])
+        src_pts = np.array([[0, 0], [0, h - 1], [w - 1, 0]])
+        DST_PTS = np.array([[0, 0], [0, self.width - 1], [self.height - 1, 0]])
+        tform = estimate_transform('similarity', src_pts, DST_PTS)
+
+        # cropped_image = warp(image, tform.inverse, output_shape=(self.image_size, self.image_size))
+        # # change kpt accordingly
+        # cropped_kpt = np.dot(tform.params, np.hstack([kpt, np.ones([kpt.shape[0],1])]).T).T # np.linalg.inv(tform.params)
+        return tform

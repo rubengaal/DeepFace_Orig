@@ -115,12 +115,9 @@ class Trainer(object):
         # [B, K, 3, size, size] ==> [BxK, 3, size, size]
         images = batch['image'].to(self.device); images = images.view(-1, images.shape[-3], images.shape[-2], images.shape[-1]) 
         lmk = batch['landmark'].to(self.device); lmk = lmk.view(-1, lmk.shape[-2], lmk.shape[-1])
-        masks = batch['mask'].to(self.device); masks = masks.view(-1, images.shape[-2], images.shape[-1]) 
+        masks = batch['mask'].to(self.device); masks = masks.view(-1, images.shape[-2], images.shape[-1])
 
         #-- encoder
-        torch.cuda.empty_cache()
-
-        print(torch.cuda.memory_summary(device=None, abbreviated=False))
         codedict = self.deca.encode(images, use_detail=self.train_detail)
         
         ### shape constraints for coarse model
@@ -143,7 +140,8 @@ class Trainer(object):
             else:
                 shapecode_new = shapecode[new_order]
                 codedict['shape'] = torch.cat([shapecode, shapecode_new], dim=0)
-            for key in ['tex', 'exp', 'pose', 'cam', 'light', 'images']:
+
+            for key in ['tex', 'exp', 'pose', 'cam', 'light', 'images', 'focus_cam']:
                 code = codedict[key]
                 codedict[key] = torch.cat([code, code], dim=0)
             ## append gt
@@ -247,15 +245,15 @@ class Trainer(object):
 
             #--- extract texture
             uv_pverts = self.deca.render.world2uv(trans_verts).detach()
-            uv_gt = F.grid_sample(torch.cat([images, masks], dim=1), uv_pverts.permute(0,2,3,1)[:,:,:,:2], mode='bilinear', align_corners=False)
-            uv_texture_gt = uv_gt[:,:3,:,:].detach(); uv_mask_gt = uv_gt[:,3:,:,:].detach()
+            #uv_gt = F.grid_sample(torch.cat([images, masks], dim=1), uv_pverts.permute(0,2,3,1)[:,:,:,:2], mode='bilinear', align_corners=False)
+            #uv_texture_gt = uv_gt[:,:3,:,:].detach(); uv_mask_gt = uv_gt[:,3:,:,:].detach()
             # self-occlusion
             normals = util.vertex_normals(trans_verts, self.deca.render.faces.expand(batch_size, -1, -1))
             uv_pnorm = self.deca.render.world2uv(normals)
             uv_mask = (uv_pnorm[:,[-1],:,:] < -0.05).float().detach()
             ## combine masks
-            uv_vis_mask = uv_mask_gt*uv_mask*self.deca.uv_face_eye_mask
-            
+            uv_vis_mask = uv_mask*self.deca.uv_face_eye_mask #uv_mask_gt*
+
             #### ----------------------- Losses
             losses = {}
             ############################### details
@@ -268,11 +266,11 @@ class Trainer(object):
             pi = 0
             new_size = 256
             uv_texture_patch = F.interpolate(uv_texture[:, :, self.face_attr_mask[pi][2]:self.face_attr_mask[pi][3], self.face_attr_mask[pi][0]:self.face_attr_mask[pi][1]], [new_size, new_size], mode='bilinear')
-            uv_texture_gt_patch = F.interpolate(uv_texture_gt[:, :, self.face_attr_mask[pi][2]:self.face_attr_mask[pi][3], self.face_attr_mask[pi][0]:self.face_attr_mask[pi][1]], [new_size, new_size], mode='bilinear')
+            #uv_texture_gt_patch = F.interpolate(uv_texture_gt[:, :, self.face_attr_mask[pi][2]:self.face_attr_mask[pi][3], self.face_attr_mask[pi][0]:self.face_attr_mask[pi][1]], [new_size, new_size], mode='bilinear')
             uv_vis_mask_patch = F.interpolate(uv_vis_mask[:, :, self.face_attr_mask[pi][2]:self.face_attr_mask[pi][3], self.face_attr_mask[pi][0]:self.face_attr_mask[pi][1]], [new_size, new_size], mode='bilinear')
             
-            losses['photo_detail'] = (uv_texture_patch*uv_vis_mask_patch - uv_texture_gt_patch*uv_vis_mask_patch).abs().mean()*self.cfg.loss.photo_D
-            losses['photo_detail_mrf'] = self.mrf_loss(uv_texture_patch*uv_vis_mask_patch, uv_texture_gt_patch*uv_vis_mask_patch)*self.cfg.loss.photo_D*self.cfg.loss.mrf
+            #losses['photo_detail'] = (uv_texture_patch*uv_vis_mask_patch - uv_texture_gt_patch*uv_vis_mask_patch).abs().mean()*self.cfg.loss.photo_D
+            #losses['photo_detail_mrf'] = self.mrf_loss(uv_texture_patch*uv_vis_mask_patch, uv_texture_gt_patch*uv_vis_mask_patch)*self.cfg.loss.photo_D*self.cfg.loss.mrf
 
             losses['z_reg'] = torch.mean(uv_z.abs())*self.cfg.loss.reg_z
             losses['z_diff'] = lossfunc.shading_smooth_loss(uv_shading)*self.cfg.loss.reg_diff
@@ -369,12 +367,12 @@ class Trainer(object):
 
         self.train_dataloader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True,
                             num_workers=self.cfg.dataset.num_workers,
-                            pin_memory=False,
+                            pin_memory=True,
                             drop_last=True)
         self.train_iter = iter(self.train_dataloader)
         self.val_dataloader = DataLoader(self.val_dataset, batch_size=8, shuffle=True,
                             num_workers=2,
-                            pin_memory=False,
+                            pin_memory=True,
                             drop_last=False)
         self.val_iter = iter(self.val_dataloader)
 
@@ -403,10 +401,10 @@ class Trainer(object):
                     logger.info(loss_info)
 
                 if self.global_step % self.cfg.train.vis_steps == 0:
-                    visind = list(range(8))
+                    visind = list(range(1))
                     shape_images = self.deca.render.render_shape(opdict['verts'][visind], opdict['trans_verts'][visind])
                     visdict = {
-                        'inputs': opdict['images'][visind], 
+                        'inputs': opdict['images'][visind],
                         'landmarks2d_gt': util.tensor_vis_landmarks(opdict['images'][visind], opdict['lmk'][visind], isScale=True),
                         'landmarks2d': util.tensor_vis_landmarks(opdict['images'][visind], opdict['landmarks2d'][visind], isScale=True),
                         'shape_images': shape_images,
@@ -418,7 +416,7 @@ class Trainer(object):
 
                     savepath = os.path.join(self.cfg.output_dir, self.cfg.train.vis_dir, f'{self.global_step:06}.jpg')
                     grid_image = util.visualize_grid(visdict, savepath, return_gird=True)
-                    # import ipdb; ipdb.set_trace()                    
+
                     self.writer.add_image('train_images', (grid_image/255.).astype(np.float32).transpose(2,0,1), self.global_step)
 
                 if self.global_step>0 and self.global_step % self.cfg.train.checkpoint_steps == 0:
@@ -426,7 +424,8 @@ class Trainer(object):
                     model_dict['opt'] = self.opt.state_dict()
                     model_dict['global_step'] = self.global_step
                     model_dict['batch_size'] = self.batch_size
-                    torch.save(model_dict, os.path.join(self.cfg.output_dir, 'model' + '.tar'))   
+                    torch.save(model_dict, os.path.join(self.cfg.output_dir, 'model' + '.tar'))
+                    logger.info("SAVED MODEL")
                     # 
                     if self.global_step % self.cfg.train.checkpoint_steps*10 == 0:
                         os.makedirs(os.path.join(self.cfg.output_dir, 'models'), exist_ok=True)
@@ -439,7 +438,8 @@ class Trainer(object):
                     self.evaluate()
 
                 all_loss = losses['all_loss']
-                self.opt.zero_grad(); all_loss.backward(); self.opt.step()
+                self.opt.zero_grad(set_to_none=True); all_loss.backward(); self.opt.step()
                 self.global_step += 1
+                logger.info(self.global_step)
                 if self.global_step > self.cfg.train.max_steps:
                     break

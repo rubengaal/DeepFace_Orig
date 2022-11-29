@@ -130,3 +130,7 @@ dmypy.json
 
 image_root/
 data/
+
+pretrain/
+TestSamples/
+MOFA_UNet_Save/

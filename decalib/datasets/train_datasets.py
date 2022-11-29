@@ -35,7 +35,7 @@ def build_dataloader(config, is_train=True):
     #if 'now_eval' in config.training_data:
         #data_list.append(NoWVal())
     if 'celeba' in config.training_data:
-        data_list.append(CelebDataset(device=config.device,train=True,height=config.image_size,width=config.image_size,scale=[config.scale_min, config.scale_max]))
+        data_list.append(CelebDataset(device=torch.device('cpu'),train=True,height=config.image_size,width=config.image_size,scale=[config.scale_min, config.scale_max]))
     if 'aflw2000' in config.training_data:
         data_list.append(AFLW2000())
     train_dataset = ConcatDataset(data_list)

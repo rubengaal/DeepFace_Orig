@@ -257,7 +257,6 @@ class FLAMETex(nn.Module):
         texcode: [batchsize, n_tex]
         texture: [bz, 3, 256, 256], range: 0-1
         '''
-        torch.cuda.empty_cache()
         texture = self.texture_mean + (self.texture_basis*texcode[:,None,:]).sum(-1)
         texture = texture.reshape(texcode.shape[0], 512, 512, 3).permute(0,3,1,2)
         texture = F.interpolate(texture, [256, 256])

@@ -50,8 +50,8 @@ class DECA(nn.Module):
         self._setup_renderer(self.cfg.model)
 
     def _setup_renderer(self, model_cfg):
-        set_rasterizer(self.cfg.rasterizer_type)
-        self.render = SRenderY(self.image_size, obj_filename=model_cfg.topology_path, uv_size=model_cfg.uv_size, rasterizer_type=self.cfg.rasterizer_type).to(self.device)
+        set_rasterizer(type='standard')
+        self.render = SRenderY(self.image_size, obj_filename=model_cfg.topology_path, uv_size=model_cfg.uv_size).to(self.device)
         # face mask for rendering details
         mask = imread(model_cfg.face_eye_mask_path).astype(np.float32)/255.; mask = torch.from_numpy(mask[:,:,0])[None,None,:,:].contiguous()
         self.uv_face_eye_mask = F.interpolate(mask, [model_cfg.uv_size, model_cfg.uv_size]).to(self.device)
@@ -68,7 +68,7 @@ class DECA(nn.Module):
 
     def _create_model(self, model_cfg):
         # set up parameters
-        self.n_param = model_cfg.n_shape+model_cfg.n_tex+model_cfg.n_exp+model_cfg.n_pose+model_cfg.n_cam+model_cfg.n_light
+        self.n_param = model_cfg.n_shape+model_cfg.n_tex+model_cfg.n_exp+model_cfg.n_pose+model_cfg.n_cam+model_cfg.n_light #+ model_cfg.n_focus_cam
         self.n_detail = model_cfg.n_detail
         self.n_cond = model_cfg.n_exp + 3 # exp + jaw pose
         self.num_list = [model_cfg.n_shape, model_cfg.n_tex, model_cfg.n_exp, model_cfg.n_pose, model_cfg.n_cam, model_cfg.n_light]
@@ -142,7 +142,6 @@ class DECA(nn.Module):
             with torch.no_grad():
                 parameters = self.E_flame(images)
         else:
-            torch.cuda.empty_cache()
             parameters = self.E_flame(images)
         codedict = self.decompose_code(parameters, self.param_dict)
         codedict['images'] = images
@@ -198,8 +197,8 @@ class DECA(nn.Module):
             background = None
 
         if rendering:
-            # ops = self.render(verts, trans_verts, albedo, codedict['light'])
-            ops = self.render(verts, trans_verts, albedo, h=h, w=w, background=background)
+            ops = self.render(verts, trans_verts, albedo, codedict['light'])
+            #ops = self.render(verts, trans_verts, albedo, h=h, w=w, background=background)
             ## output
             opdict['grid'] = ops['grid']
             opdict['rendered_images'] = ops['images']
@@ -239,7 +238,7 @@ class DECA(nn.Module):
             uv_gt = F.grid_sample(images, uv_pverts.permute(0,2,3,1)[:,:,:,:2], mode='bilinear', align_corners=False)
             if self.cfg.model.use_tex:
                 ## TODO: poisson blending should give better-looking results
-                if self.cfg.model.extract_tex:
+                if self.cfg.model.use_tex:
                     uv_texture_gt = uv_gt[:,:3,:,:]*self.uv_face_eye_mask + (uv_texture[:,:3,:,:]*(1-self.uv_face_eye_mask))
                 else:
                     uv_texture_gt = uv_texture[:,:3,:,:]

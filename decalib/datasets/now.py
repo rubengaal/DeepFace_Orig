@@ -11,7 +11,7 @@ from torch.utils.data import Dataset, DataLoader, ConcatDataset
 
 class NoWDataset(Dataset):
     def __init__(self, ring_elements=6, crop_size=224, scale=1.6):
-        folder = '/ps/scratch/yfeng/other-github/now_evaluation/data/NoW_Dataset'
+        folder = 'image_root/Data/NoW_Dataset'
         self.data_path = os.path.join(folder, 'imagepathsvalidation.txt')
         with open(self.data_path) as f:
             self.data_lines = f.readlines()

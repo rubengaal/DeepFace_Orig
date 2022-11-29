@@ -32,7 +32,7 @@ def build_train(config, is_train=True):
     if 'celebahq' in config.training_data:
         data_list.append(CelebAHQDataset(image_size=config.image_size, scale=[config.scale_min, config.scale_max], trans_scale=config.trans_scale))
     if 'celeba' in config.training_data:
-        data_list.append(CelebDataset(device=torch.device('cuda'),train=True,height=config.image_size,width=config.image_size,scale=[config.scale_min, config.scale_max]))
+        data_list.append(CelebDataset(device=torch.device('cpu'),train=True,height=config.image_size,width=config.image_size,scale=[config.scale_min, config.scale_max]))
 
     dataset = ConcatDataset(data_list)
     return dataset
@@ -46,7 +46,7 @@ def build_val(config, is_train=True):
     if 'aflw2000' in config.eval_data:
         data_list.append(AFLW2000())
     if 'celeba' in config.eval_data:
-        data_list.append(CelebDataset(device=torch.device('cuda'),train=False,height=config.image_size,width=config.image_size,scale=[config.scale_min, config.scale_max]))
+        data_list.append(CelebDataset(device=torch.device('cpu'),train=False,height=config.image_size,width=config.image_size,scale=[config.scale_min, config.scale_max]))
     dataset = ConcatDataset(data_list)
 
     return dataset
