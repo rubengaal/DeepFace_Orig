@@ -1,7 +1,7 @@
-output_dir: "/pretrain"
+output_dir: "C:/Users/xpand/Desktop/Workspace/DeepFace_Orig/pretrain"
 pretrained_modelpath: ''
 dataset:
-  batch_size: 64
+  batch_size: 2
   K: 1
 loss:
   photo: 0.
@@ -16,6 +16,6 @@ train:
   max_steps: 100000
   log_steps: 10
   vis_steps: 500
-  checkpoint_steps: 1000
+  checkpoint_steps: 100
   val_steps: 500
   eval_steps: 1000
