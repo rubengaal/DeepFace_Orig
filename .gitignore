@@ -134,3 +134,9 @@ data/
 pretrain/
 TestSamples/
 MOFA_UNet_Save/
+/models/ms1mv3_arcface_r50_fp16/backbone.pth
+/models/ms1mv3_arcface_r50_fp16/ijbc.npy
+/models/ms1mv3_arcface_r50_fp16/ijbc.pdf
+/basel_3DMM/Download_BFM2017.txt
+/basel_3DMM/idxes_crop.pkl
+/basel_3DMM/model2017-1_bfm_nomouth.h5
