@@ -30,9 +30,9 @@ from decalib.deca import DECA
 from decalib.utils import lossfunc
 from decalib.utils.config import cfg
 import decalib.utils.config as config
-from face_toolbox_keras.models.parser import face_parser
 from models import networks
 from decalib.trainer import Trainer
+from face_toolbox_keras.models.parser import face_parser
 import pickle
 
 # hyper-parameters
@@ -40,7 +40,7 @@ par = argparse.ArgumentParser(description='MoFA')
 
 par.add_argument('--learning_rate', default=0.1, type=float, help='The learning rate')
 par.add_argument('--epochs', default=1, type=int, help='Total epochs')
-par.add_argument('--batch_size', default=1, type=int, help='Batch sizes')
+par.add_argument('--batch_size', default=4, type=int, help='Batch sizes')
 par.add_argument('--gpu', default=0, type=int, help='The GPU ID')
 par.add_argument('--pretrained_model', default=00, type=int, help='Pretrained model')
 par.add_argument('--img_path', type=str, default='image_root/Data/Dataset', help='Root of the training samples')
@@ -221,7 +221,7 @@ def proc_mofaunet(batch, batchn, images, landmarks, render_mode, train_net=False
     opdict, visdict = deca.decode(codedict)  # tensor
 
     lm68 = opdict['landmarks2d']
-    raster_mask = generateMasks(images).cuda()
+    raster_mask = generateMasks(images).cuda() #TODO load it
     raster_image = visdict['rendered_images']
     image_concatenated = torch.cat((raster_image, images), axis=1)
     unet_est_mask = unet_for_mask(image_concatenated)
@@ -243,10 +243,10 @@ def proc_mofaunet(batch, batchn, images, landmarks, render_mode, train_net=False
         deca_batch['landmark'] = landmarks
         deca_batch['mask'] = unet_est_mask
         
-        d_losses, paramdict = trainer.training_step(deca_batch, batchn, training_type='detail')
+        #d_losses, paramdict = trainer.training_step(deca_batch, batchn, training_type='detail')
         c_losses, paramdict = trainer.training_step(deca_batch, batchn, training_type='coarse')
 
-        loss_mofa = c_losses['all_loss'] + d_losses['all_loss']
+        loss_mofa = c_losses['all_loss'] #+ d_losses['all_loss']
 
     if train_net == False:
         mask_binary_loss = (0.5 - torch.mean(torch.norm(valid_loss_mask - 0.5, 2, 1)))
@@ -263,6 +263,8 @@ def proc_mofaunet(batch, batchn, images, landmarks, render_mode, train_net=False
     #    loss_unet += I_IM_Per_loss * dist_weight['preserve'] + IRM_IM_Per_loss * dist_weight['dist']
     #if train_net == False:
     #    loss_test += I_IM_Per_loss * dist_weight['preserve'] + IRM_IM_Per_loss * dist_weight['dist']
+
+    #TODO maybe calculate loss for DECA
 
     # force it to be binary mask
     loss_mask_neighbor = torch.zeros([1])
@@ -376,7 +378,7 @@ for ep in range(0, epoch):
                 model_dict['opt'] = opt.state_dict()
                 model_dict['global_step'] = ct
                 model_dict['batch_size'] = batch
-                #torch.save(model_dict, output_path, 'model_{:06d}.tar'.format(ct))
+                torch.save(model_dict, os.path.join(output_path, 'deca' + '.tar'))
                 torch.save(unet_for_mask, output_path + 'unet_{:06d}.model'.format(ct))
 
             # validating
@@ -467,5 +469,5 @@ model_dict = trainer.deca.model_dict()
 model_dict['opt'] = opt.state_dict()
 model_dict['global_step'] = ct
 model_dict['batch_size'] = batch
-#torch.save(model_dict, output_path, 'model_{:06d}.tar'.format(ct))
+torch.save(model_dict, os.path.join(output_path, 'deca' + '.tar'))
 
