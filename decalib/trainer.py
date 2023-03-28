@@ -59,7 +59,7 @@ class Trainer(object):
         # deca model
         self.deca = model.to(self.device)
         self.configure_optimizers()
-        #self.load_checkpoint(0)
+        self.load_checkpoint()
 
         # initialize loss  
         # # initialize loss   
@@ -86,7 +86,7 @@ class Trainer(object):
                                     self.deca.E_flame.parameters(),
                                     lr=self.cfg.train.lr,
                                     amsgrad=False)
-    def load_checkpoint(self, ct):
+    def load_checkpoint(self, ct = 0):
         model_dict = self.deca.model_dict()
         # resume training, including model weight, opt, steps
         # import ipdb; ipdb.set_trace()
@@ -115,7 +115,8 @@ class Trainer(object):
             self.deca.E_flame.eval()
         # [B, K, 3, size, size] ==> [BxK, 3, size, size]
         images = batch['image'].to(self.device); images = images.view(-1, images.shape[-3], images.shape[-2], images.shape[-1]) 
-        lmk = batch['landmark'].to(self.device); lmk = lmk.view(-1, lmk.shape[-2], lmk.shape[-1])
+        lmk = batch['landmark'].to(self.device);
+        lmk = lmk.view(-1, lmk.shape[-2], lmk.shape[-1])
         masks = batch['mask'].to(self.device); masks = masks.view(-1, images.shape[-2], images.shape[-1])
 
         #-- encoder
@@ -146,9 +147,11 @@ class Trainer(object):
                 code = codedict[key]
                 codedict[key] = torch.cat([code, code], dim=0)
             ## append gt
-            images = torch.cat([images, images], dim=0)# images = images.view(-1, images.shape[-3], images.shape[-2], images.shape[-1]) 
-            lmk = torch.cat([lmk, lmk], dim=0) #lmk = lmk.view(-1, lmk.shape[-2], lmk.shape[-1])
-            torch.permute(lmk, (0, 2, 1))
+            images = torch.cat([images, images], dim=0)
+            #images = images.view(-1, images.shape[-3], images.shape[-2], images.shape[-1]) # commented
+            lmk = torch.cat([lmk, lmk], dim=0)
+            #lmk = lmk.view(-1, lmk.shape[-2], lmk.shape[-1]) #commented
+            #torch.permute(lmk, (0, 2, 1))
             masks = torch.cat([masks, masks], dim=0)
 
         batch_size = images.shape[0]
@@ -156,18 +159,19 @@ class Trainer(object):
         ###--------------- training coarse model
         if not self.train_detail:
             #-- decoder
-            rendering = True if self.cfg.loss.photo>0 else False
+            rendering = True #TODO get photoloss from step4
             opdict = self.deca.decode(codedict, rendering = rendering, vis_lmk=False, return_vis=False, use_detail=False)
             opdict['images'] = images
             opdict['lmk'] = lmk
 
-            if self.cfg.loss.photo > 0.:
-                #------ rendering
-                # mask
-                mask_face_eye = F.grid_sample(self.deca.uv_face_eye_mask.expand(batch_size,-1,-1,-1), opdict['grid'].detach(), align_corners=False) 
-                # images
-                predicted_images = opdict['rendered_images']*mask_face_eye*opdict['alpha_images']
-                opdict['predicted_images'] = predicted_images
+            # ------ rendering
+            # mask
+            mask_face_eye = F.grid_sample(self.deca.uv_face_eye_mask.expand(batch_size, -1, -1, -1),
+                                          opdict['grid'].detach(), align_corners=False)
+            # images
+            predicted_images = opdict['rendered_images'] * mask_face_eye * opdict['alpha_images']
+            opdict['predicted_images'] = predicted_images
+
 
             #### ----------------------- Losses
             self.losses = {}

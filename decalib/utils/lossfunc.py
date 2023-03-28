@@ -133,6 +133,9 @@ def batch_kp_2d_l1_loss(real_2d_kp, predicted_2d_kp, weights=None):
     kp_gt  : N x K x 3
     kp_pred: N x K x 2
     """
+    #real_2d_kp_np = np.array(real_2d_kp.to('cpu')).reshape((2,68,2))
+    #real_2d_kp = torch.from_numpy(real_2d_kp_np)
+    #torch.reshape(real_2d_kp, (2,68,2))
     if weights is not None:
         real_2d_kp[:,:,2] = weights[None,:]*real_2d_kp[:,:,2]
     kp_gt = real_2d_kp.view(-1, 3)

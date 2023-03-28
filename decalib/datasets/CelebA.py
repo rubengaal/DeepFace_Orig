@@ -97,7 +97,7 @@ right_mouth = [54]
 
 class CelebDataset(torch.utils.data.Dataset):
 
-    def __init__(self, device, train, height, width, scale,trans_scale = 0, landmark_file=False, test_mode=False,
+    def  __init__(self, device, train, height, width, scale,trans_scale = 0, landmark_file=False, test_mode=False,
                  occloss_mode=False, is_use_aug=True, bfm_folder='BFM'):
         super(CelebDataset, self)
         self.test_mode = test_mode
