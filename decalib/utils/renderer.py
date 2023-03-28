@@ -39,7 +39,8 @@ def set_rasterizer(type = 'standard'):
     # If JIT does not work, try manually installation first
     # 1. see instruction here: pixielib/utils/rasterizer/INSTALL.md
     # 2. add this: "from .rasterizer.standard_rasterize_cuda import standard_rasterize" here
-    from standard_rasterize_cuda import standard_rasterize
+    #from standard_rasterize_cuda import standard_rasterize
+    from .rasterizer.standard_rasterize_cuda import standard_rasterize
     
 class StandardRasterizer(nn.Module):
     """ Alg: https://www.scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation

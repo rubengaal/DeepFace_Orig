@@ -54,11 +54,12 @@ class Trainer(object):
         self.K = self.cfg.dataset.K
         # training stage: coarse and detail
         self.train_detail = self.cfg.train.train_detail
-
+        self.losses = {}
+        self.detail_losses = {}
         # deca model
         self.deca = model.to(self.device)
         self.configure_optimizers()
-        self.load_checkpoint()
+        #self.load_checkpoint(0)
 
         # initialize loss  
         # # initialize loss   
@@ -85,11 +86,11 @@ class Trainer(object):
                                     self.deca.E_flame.parameters(),
                                     lr=self.cfg.train.lr,
                                     amsgrad=False)
-    def load_checkpoint(self):
+    def load_checkpoint(self, ct):
         model_dict = self.deca.model_dict()
         # resume training, including model weight, opt, steps
         # import ipdb; ipdb.set_trace()
-        if self.cfg.train.resume and os.path.exists(os.path.join(self.cfg.output_dir, 'model.tar')):
+        if self.cfg.train.resume and os.path.exists(os.path.join(self.cfg.output_dir, 'model.tar')): #'model_{:06d}.tar'.format(ct)
             checkpoint = torch.load(os.path.join(self.cfg.output_dir, 'model.tar'))
             for key in model_dict.keys():
                 if key in checkpoint.keys():
@@ -141,12 +142,13 @@ class Trainer(object):
                 shapecode_new = shapecode[new_order]
                 codedict['shape'] = torch.cat([shapecode, shapecode_new], dim=0)
 
-            for key in ['tex', 'exp', 'pose', 'cam', 'light', 'images', 'focus_cam']:
+            for key in ['tex', 'exp', 'pose', 'cam', 'light', 'images']:
                 code = codedict[key]
                 codedict[key] = torch.cat([code, code], dim=0)
             ## append gt
             images = torch.cat([images, images], dim=0)# images = images.view(-1, images.shape[-3], images.shape[-2], images.shape[-1]) 
             lmk = torch.cat([lmk, lmk], dim=0) #lmk = lmk.view(-1, lmk.shape[-2], lmk.shape[-1])
+            torch.permute(lmk, (0, 2, 1))
             masks = torch.cat([masks, masks], dim=0)
 
         batch_size = images.shape[0]
@@ -168,42 +170,49 @@ class Trainer(object):
                 opdict['predicted_images'] = predicted_images
 
             #### ----------------------- Losses
-            losses = {}
+            self.losses = {}
             
             ############################# base shape
             predicted_landmarks = opdict['landmarks2d']
             if self.cfg.loss.useWlmk:
-                losses['landmark'] = lossfunc.weighted_landmark_loss(predicted_landmarks, lmk)*self.cfg.loss.lmk
+                self.losses['landmark'] = lossfunc.weighted_landmark_loss(predicted_landmarks, lmk)*self.cfg.loss.lmk
             else:    
-                losses['landmark'] = lossfunc.landmark_loss(predicted_landmarks, lmk)*self.cfg.loss.lmk
+                self.losses['landmark'] = lossfunc.landmark_loss(predicted_landmarks, lmk)*self.cfg.loss.lmk
             if self.cfg.loss.eyed > 0.:
-                losses['eye_distance'] = lossfunc.eyed_loss(predicted_landmarks, lmk)*self.cfg.loss.eyed
+                self.losses['eye_distance'] = lossfunc.eyed_loss(predicted_landmarks, lmk)*self.cfg.loss.eyed
             if self.cfg.loss.lipd > 0.:
-                losses['lip_distance'] = lossfunc.lipd_loss(predicted_landmarks, lmk)*self.cfg.loss.lipd
+                self.losses['lip_distance'] = lossfunc.lipd_loss(predicted_landmarks, lmk)*self.cfg.loss.lipd
             
             if self.cfg.loss.photo > 0.:
                 if self.cfg.loss.useSeg:
                     masks = masks[:,None,:,:]
                 else:
                     masks = mask_face_eye*opdict['alpha_images']
-                losses['photometric_texture'] = (masks*(predicted_images - images).abs()).mean()*self.cfg.loss.photo
+                self.losses['photometric_texture'] = (masks*(predicted_images - images).abs()).mean()*self.cfg.loss.photo
 
             if self.cfg.loss.id > 0.:
                 shading_images = self.deca.render.add_SHlight(opdict['normal_images'], codedict['light'].detach())
                 albedo_images = F.grid_sample(opdict['albedo'].detach(), opdict['grid'], align_corners=False)
                 overlay = albedo_images*shading_images*mask_face_eye + images*(1-mask_face_eye)
-                losses['identity'] = self.id_loss(overlay, images) * self.cfg.loss.id
+                self.losses['identity'] = self.id_loss(overlay, images) * self.cfg.loss.id
             
-            losses['shape_reg'] = (torch.sum(codedict['shape']**2)/2)*self.cfg.loss.reg_shape
-            losses['expression_reg'] = (torch.sum(codedict['exp']**2)/2)*self.cfg.loss.reg_exp
-            losses['tex_reg'] = (torch.sum(codedict['tex']**2)/2)*self.cfg.loss.reg_tex
-            losses['light_reg'] = ((torch.mean(codedict['light'], dim=2)[:,:,None] - codedict['light'])**2).mean()*self.cfg.loss.reg_light
+            self.losses['shape_reg'] = (torch.sum(codedict['shape']**2)/2)*self.cfg.loss.reg_shape
+            self.losses['expression_reg'] = (torch.sum(codedict['exp']**2)/2)*self.cfg.loss.reg_exp
+            self.losses['tex_reg'] = (torch.sum(codedict['tex']**2)/2)*self.cfg.loss.reg_tex
+            self.losses['light_reg'] = ((torch.mean(codedict['light'], dim=2)[:,:,None] - codedict['light'])**2).mean()*self.cfg.loss.reg_light
             if self.cfg.model.jaw_type == 'euler':
                 # import ipdb; ipdb.set_trace()
                 # reg on jaw pose
-                losses['reg_jawpose_roll'] = (torch.sum(codedict['euler_jaw_pose'][:,-1]**2)/2)*100.
-                losses['reg_jawpose_close'] = (torch.sum(F.relu(-codedict['euler_jaw_pose'][:,0])**2)/2)*10.
-        
+                self.losses['reg_jawpose_roll'] = (torch.sum(codedict['euler_jaw_pose'][:,-1]**2)/2)*100.
+                self.losses['reg_jawpose_close'] = (torch.sum(F.relu(-codedict['euler_jaw_pose'][:,0])**2)/2)*10.
+
+            all_loss = 0.
+            losses_key = self.losses.keys()
+            for key in losses_key:
+                all_loss = all_loss + self.losses[key]
+            self.losses['all_loss'] = all_loss
+            return self.losses, opdict
+
         ###--------------- training detail model
         else:
             #-- decoder
@@ -255,7 +264,7 @@ class Trainer(object):
             uv_vis_mask = uv_mask*self.deca.uv_face_eye_mask #uv_mask_gt*
 
             #### ----------------------- Losses
-            losses = {}
+            self.detail_losses = {}
             ############################### details
             # if self.cfg.loss.old_mrf: 
             #     if self.cfg.loss.old_mrf_face_mask:
@@ -272,11 +281,11 @@ class Trainer(object):
             #losses['photo_detail'] = (uv_texture_patch*uv_vis_mask_patch - uv_texture_gt_patch*uv_vis_mask_patch).abs().mean()*self.cfg.loss.photo_D
             #losses['photo_detail_mrf'] = self.mrf_loss(uv_texture_patch*uv_vis_mask_patch, uv_texture_gt_patch*uv_vis_mask_patch)*self.cfg.loss.photo_D*self.cfg.loss.mrf
 
-            losses['z_reg'] = torch.mean(uv_z.abs())*self.cfg.loss.reg_z
-            losses['z_diff'] = lossfunc.shading_smooth_loss(uv_shading)*self.cfg.loss.reg_diff
+            self.detail_losses['z_reg'] = torch.mean(uv_z.abs())*self.cfg.loss.reg_z
+            self.detail_losses['z_diff'] = lossfunc.shading_smooth_loss(uv_shading)*self.cfg.loss.reg_diff
             if self.cfg.loss.reg_sym > 0.:
                 nonvis_mask = (1 - util.binary_erosion(uv_vis_mask))
-                losses['z_sym'] = (nonvis_mask*(uv_z - torch.flip(uv_z, [-1]).detach()).abs()).sum()*self.cfg.loss.reg_sym
+                self.detail_losses['z_sym'] = (nonvis_mask*(uv_z - torch.flip(uv_z, [-1]).detach()).abs()).sum()*self.cfg.loss.reg_sym
             opdict = {
                 'verts': verts,
                 'trans_verts': trans_verts,
@@ -286,14 +295,16 @@ class Trainer(object):
                 'images': images,
                 'lmk': lmk
             }
+
+            all_loss = 0.
+            losses_key = self.detail_losses.keys()
+            for key in losses_key:
+                all_loss = all_loss + self.detail_losses[key]
+            self.detail_losses['all_loss'] = all_loss
+            return self.detail_losses, opdict
             
         #########################################################
-        all_loss = 0.
-        losses_key = losses.keys()
-        for key in losses_key:
-            all_loss = all_loss + losses[key]
-        losses['all_loss'] = all_loss
-        return losses, opdict
+
         
     def validation_step(self):
         self.deca.eval()

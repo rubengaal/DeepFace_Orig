@@ -39,8 +39,8 @@ import pickle
 par = argparse.ArgumentParser(description='MoFA')
 
 par.add_argument('--learning_rate', default=0.1, type=float, help='The learning rate')
-par.add_argument('--epochs', default=130, type=int, help='Total epochs')
-par.add_argument('--batch_size', default=12, type=int, help='Batch sizes')
+par.add_argument('--epochs', default=1, type=int, help='Total epochs')
+par.add_argument('--batch_size', default=1, type=int, help='Batch sizes')
 par.add_argument('--gpu', default=0, type=int, help='The GPU ID')
 par.add_argument('--pretrained_model', default=00, type=int, help='Pretrained model')
 par.add_argument('--img_path', type=str, default='image_root/Data/Dataset', help='Root of the training samples')
@@ -58,7 +58,6 @@ output_name = 'Deca_UNet'
 device = torch.device("cuda:0") if torch.cuda.is_available() else "cpu"
 
 trainer = Trainer(model=deca, config=cfg)
-model_dict = deca.model_dict()
 
 begin_learning_rate = args.learning_rate
 decay_step_size = 5000
@@ -72,10 +71,10 @@ ct_begin = ct
 
 today = date.today()
 current_path = os.getcwd()
-model_path = current_path + '/basel_3DMM/model2017-1_bfm_nomouth.h5'
+#model_path = current_path + '/basel_3DMM/model2017-1_bfm_nomouth.h5'
 
 image_path = (args.img_path + '/').replace('//', '/')
-output_path = current_path + '/MoFA_UNet_Save/robustness/' + output_name + '/'
+output_path = current_path + '/DECA_UNet_Save/robustness/' + output_name + '/'
 if not os.path.exists(output_path):
     os.makedirs(output_path)
 
@@ -111,7 +110,7 @@ width = 224
 height = 224
 
 epoch = args.epochs
-test_batch_num = 5
+test_batch_num = 2
 
 cos = torch.nn.CosineSimilarity(dim=1, eps=1e-6)
 
@@ -123,27 +122,12 @@ testset = load_dataset.CelebDataset(device, image_path, False, height, width, 1)
 testloader = torch.utils.data.DataLoader(testset, batch_size=batch, shuffle=False, num_workers=0)
 
 # 3dmm data
-obj = lob.Object3DMM(model_path, device, is_crop=True)
-A = torch.Tensor([[9.06 * 224 / 2, 0, (width - 1) / 2.0, 0, 9.06 * 224 / 2, (height - 1) / 2.0, 0, 0, 1]]).view(-1, 3,
-                                                                                                                3).to(
-    device)  # intrinsic camera mat
-T_ini = torch.Tensor([0, 0, 1000]).to(device)  # camera translation(direction of conversion will be set by flg later)
-sh_ini = torch.zeros(3, 9, device=device)  # offset of spherical harmonics coefficient
-sh_ini[:, 0] = 0.7 * 2 * math.pi
-sh_ini = sh_ini.reshape(-1)
-
 '''----------------
 Prepare Network and Optimizer
 ----------------'''
 
 # renderer and encoder and UNet
-render_net = ren.Renderer(
-    32)  # block_size^2 pixels are simultaneously processed in renderer, lager block_size consumes lager memory
-enc_net = enc.FaceEncoder(obj).to(device)
-cos = torch.nn.CosineSimilarity(dim=1, eps=1e-6)
 
-net_recog = networks.define_net_recog(net_recog='r50', pretrained_path='models/ms1mv3_arcface_r50_fp16/backbone.pth')
-net_recog = net_recog.to(device)
 '''----------------------------------
  Fixed Testing Images for Observation
 ----------------------------------'''
@@ -154,6 +138,7 @@ for i_test, data_test in enumerate(testloader, 0):
     if i_test >= test_batch_num:
         break
     images, landmarks = data_test
+   # landmarks.permute()
     test_input_images += [images]
     test_landmarks += [landmarks]
 util.write_tiled_image(torch.cat(test_input_images, dim=0), output_path + 'test_gt.png', 10)
@@ -206,7 +191,7 @@ def generateMasks(images):
         img_mask[img_mask == 18] = 0
 
         masks.append(img_mask)
-    return torch.ShortTensor(masks)
+    return torch.ShortTensor(numpy.array(masks))
 
 
 '''-------------
@@ -232,8 +217,6 @@ def proc_mofaunet(batch, batchn, images, landmarks, render_mode, train_net=False
     U-Net input: Raster [RGB] + ORG [RGB]
     ----------------------------------------'''
 
-
-
     codedict = deca.encode(images)  # code_dict.keys() = ['shape', 'tex', 'exp', 'pose', 'cam', 'light']
     opdict, visdict = deca.decode(codedict)  # tensor
 
@@ -250,46 +233,36 @@ def proc_mofaunet(batch, batchn, images, landmarks, render_mode, train_net=False
     bg_unet_loss = torch.mean(torch.sum(raster_mask.unsqueeze(1) * (1 - unet_est_mask), axis=[2, 3]) / torch.clamp(
         torch.sum(raster_mask.unsqueeze(1), axis=[2, 3]), min=1))  # area loss
     mask_binary_loss = torch.zeros([1])
-    perceptual_loss = torch.zeros([1])
-    land_loss = torch.zeros([1])
-    stat_reg = torch.zeros([1])
+    loss_mofa = torch.zeros([1])
     if train_net == 'unet':
         mask_binary_loss = (0.5 - torch.mean(torch.norm(valid_loss_mask - 0.5, 2, 1)))
         loss_unet = mask_binary_loss * dist_weight['binary'] + bg_unet_loss * dist_weight['area']
     if train_net == 'mofa':
-        pred_feat = net_recog(image=raster_image, pred_lm=lm68.transpose(1, 2))
-        gt_feat = net_recog(images, landmarks.transpose(1, 2))
-        cosine_d = torch.sum(pred_feat * gt_feat, dim=-1)
-        perceptual_loss = torch.sum(1 - cosine_d) / cosine_d.shape[0]
-        land_loss = torch.mean((obj.weight_lm * (landmarks - lm68)) ** 2)
-        #stat_reg = (torch.sum(codedict['shape'] ** 2) + torch.sum(codedict['exp'] ** 2) + torch.sum(
-            #opdict['albedo'] ** 2)) / float(batch) / 224.0
-        losses, paramdict = trainer.training_step(images, batchn)
-        loss_mofa = losses['all_loss']
+        deca_batch = {}
+        deca_batch['image'] = images
+        deca_batch['landmark'] = landmarks
+        deca_batch['mask'] = unet_est_mask
+        
+        d_losses, paramdict = trainer.training_step(deca_batch, batchn, training_type='detail')
+        c_losses, paramdict = trainer.training_step(deca_batch, batchn, training_type='coarse')
+
+        loss_mofa = c_losses['all_loss'] + d_losses['all_loss']
 
     if train_net == False:
         mask_binary_loss = (0.5 - torch.mean(torch.norm(valid_loss_mask - 0.5, 2, 1)))
-        pred_feat = net_recog(image=raster_image, pred_lm=lm68)
-        gt_feat = net_recog(images, landmarks.transpose(1, 2))
-        cosine_d = torch.sum(pred_feat * gt_feat, dim=-1)
-        perceptual_loss = torch.sum(1 - cosine_d) / cosine_d.shape[0]
-        land_loss = torch.mean((obj.weight_lm * (landmarks - opdict['trans_verts'][:, 0:2, obj.landmark])) ** 2)
-        #stat_reg = (torch.sum(codedict['shape'] ** 2) + torch.sum(codedict['exp'] ** 2) + torch.sum(
-            #opdict['albedo'] ** 2)) / float(batch) / 224.0
+        loss_test = mask_binary_loss.to('cpu') * dist_weight['binary'] + masked_rec_loss.to('cpu') * 0.5 + bg_unet_loss.to('cpu') * dist_weight[
+            'area'] + loss_mofa.to('cpu')
 
-        loss_test = mask_binary_loss * dist_weight['binary'] + masked_rec_loss * 0.5 + bg_unet_loss * dist_weight[
-            'area'] + perceptual_loss * 0.25 + 1e-1 + 5e-4 * land_loss
-
-    I_target_masked = images * valid_loss_mask
-    id_target_masked = net_recog(I_target_masked, landmarks.transpose(1, 2), is_shallow=True)
-    id_target = net_recog(images, landmarks.transpose(1, 2), is_shallow=True)
-    id_reconstruct_masked = net_recog(raster_image * valid_loss_mask, pred_lm=lm68.transpose(1, 2), is_shallow=True)
-    I_IM_Per_loss = torch.mean(1 - cos(id_target, id_target_masked))
-    IRM_IM_Per_loss = torch.mean(1 - cos(id_reconstruct_masked, id_target_masked))
-    if train_net == 'unet':
-        loss_unet += I_IM_Per_loss * dist_weight['preserve'] + IRM_IM_Per_loss * dist_weight['dist']
-    if train_net == False:
-        loss_test += I_IM_Per_loss * dist_weight['preserve'] + IRM_IM_Per_loss * dist_weight['dist']
+    #I_target_masked = images * valid_loss_mask
+    #id_target_masked = net_recog(I_target_masked, landmarks.transpose(1, 2), is_shallow=True)
+    #id_target = net_recog(images, landmarks.transpose(1, 2), is_shallow=True)
+    #id_reconstruct_masked = net_recog(raster_image * valid_loss_mask, pred_lm=lm68.transpose(1, 2), is_shallow=True)
+    #I_IM_Per_loss = torch.mean(1 - cos(id_target, id_target_masked))
+    #IRM_IM_Per_loss = torch.mean(1 - cos(id_reconstruct_masked, id_target_masked))
+    #if train_net == 'unet':
+    #    loss_unet += I_IM_Per_loss * dist_weight['preserve'] + IRM_IM_Per_loss * dist_weight['dist']
+    #if train_net == False:
+    #    loss_test += I_IM_Per_loss * dist_weight['preserve'] + IRM_IM_Per_loss * dist_weight['dist']
 
     # force it to be binary mask
     loss_mask_neighbor = torch.zeros([1])
@@ -302,9 +275,9 @@ def proc_mofaunet(batch, batchn, images, landmarks, render_mode, train_net=False
     if train_net == False:
         loss = loss_test
     losses_return = torch.FloatTensor(
-        [loss.item(), land_loss.item(), masked_rec_loss.item(), bg_unet_loss.item(), \
-         perceptual_loss.item(), I_IM_Per_loss.item(), IRM_IM_Per_loss.item(), loss_mask_neighbor.item(),
-         mask_binary_loss.item()])
+        [loss.item(), masked_rec_loss.item(), bg_unet_loss.item(), \
+         loss_mask_neighbor.item(),
+         mask_binary_loss.item(), loss_mofa])
 
     if train_net == 'unet':
         return loss_unet, losses_return, raster_image, raster_mask, unet_est_mask, valid_loss_mask
@@ -321,14 +294,14 @@ load pretrained model and continue training
 -----------------------------------------'''
 if ct != 0:
 
-    trained_model_path = output_path + 'enc_net_{:06d}.model'.format(ct)
-    # enc_net = torch.load(trained_model_path, map_location='cuda:{}'.format(util.device_ids[GPU_no]))
+    trained_model_path = output_path + 'model_{:06d}.tar'.format(ct)
+    trainer.load_checkpoint(ct);
     unet_model_path = output_path + 'unet_{:06d}.model'.format(ct)
     unet_for_mask = torch.load(unet_model_path, map_location='cuda:{}'.format(util.device_ids[GPU_no]))
 
 
 else:
-    trained_model_path = current_path + '/MoFA_UNet_Save/pretrain_mofa' + '/enc_net_000008.model'
+    trained_model_path = current_path + '/decalib/pretrain/' + 'deca_modelgit.tar'
     # enc_net = torch.load(trained_model_path, map_location='cuda:{}'.format(util.device_ids[GPU_no]))
     unet_model_path = current_path + '\\MoFA_UNet_Save\\Pretrain_UNet' + '\\unet_mask_000070.model'
     unet_for_mask = torch.load(unet_model_path, map_location='cuda:{}'.format(util.device_ids[GPU_no]))
@@ -353,8 +326,8 @@ scheduler_deca = torch.optim.lr_scheduler.StepLR(opt, step_size=decay_step_size,
 
 print('Training ...')
 start = time.time()
-mean_losses_mofa = torch.zeros([10])
-mean_losses_unet = torch.zeros([10])
+mean_losses_mofa = torch.zeros([6])
+mean_losses_unet = torch.zeros([6])
 
 trainset = load_dataset.CelebDataset(device, image_path, True, height, width, 1)
 
@@ -374,7 +347,7 @@ for ep in range(0, epoch):
         --------------------------'''
         a = count_parameters(deca)
         b = count_parameters(unet_for_mask)
-        if (ct - ct_begin) % 1000 == 0:
+        if (ct - ct_begin) % 3 == 0: #1000
             deca.eval()
             unet_for_mask.eval()
             test_raster_images = []
@@ -397,23 +370,23 @@ for ep in range(0, epoch):
             '''-------------------------
              Save Model every 5000 iters
             --------------------------'''
-            if (ct - ct_begin) % 10000 == 0 and ct > ct_begin:
+            if (ct - ct_begin) % 6 == 0 and ct > ct_begin: #10000
                 # torch.save(enc_net, output_path + 'enc_net_{:06d}.model'.format(ct))
-                model_dict = deca.model_dict()
+                model_dict = trainer.deca.model_dict()
                 model_dict['opt'] = opt.state_dict()
                 model_dict['global_step'] = ct
                 model_dict['batch_size'] = batch
-                torch.save(model_dict, output_path, 'model' + '.tar')
+                #torch.save(model_dict, output_path, 'model_{:06d}.tar'.format(ct))
                 torch.save(unet_for_mask, output_path + 'unet_{:06d}.model'.format(ct))
 
             # validating
             '''-------------------------
             Validate Model every 1000 iters
             --------------------------'''
-            if (ct - ct_begin) % 5000 == 0 and ct > ct_begin:
+            if (ct - ct_begin) % 6 == 0 and ct > ct_begin: #5000
                 print('Training mode:' + output_name)
                 c_test = 0
-                mean_test_losses = torch.zeros([10])
+                mean_test_losses = torch.zeros([6])
 
                 for i_test, data_test in enumerate(testloader, 0):
                     image, landmark = data_test
@@ -441,9 +414,11 @@ for ep in range(0, epoch):
         --------------------------'''
 
         images, landmarks = data
+        torch.permute(landmarks, (0,2,1))
+
         if images.shape[0] != batch:
             continue
-        if ct % 30000 > 5000:
+        if ct % 10 > 5: # 30000 > 5000
             deca.train()
             unet_for_mask.eval()
             loss_mofa, losses_return_mofa, _, _, _, _ = proc_mofaunet(data, i, images, landmarks, True, 'mofa')
@@ -471,11 +446,11 @@ for ep in range(0, epoch):
         Show Training Loss
         --------------------------'''
 
-        if (ct - ct_begin) % 100 == 0 and ct > ct_begin:
+        if (ct - ct_begin) % 10 == 0 and ct > ct_begin: #100
             end = time.time()
             mean_losses_unet = mean_losses_unet / 100
             mean_losses_mofa = mean_losses_mofa / 100
-            str = 'mofa loss:{}'.format(ct)
+            str = 'deca loss:{}'.format(ct)
             for loss_temp in mean_losses_mofa:
                 str += ' {:05f}'.format(loss_temp)
             str += '\nunet loss:{}'.format(ct)
@@ -485,7 +460,12 @@ for ep in range(0, epoch):
             print(str)
             writer_train.writerow(str)
             start = time.time()
-            mean_losses_unet = torch.zeros([10])
-            mean_losses_mofa = torch.zeros([10])
+            mean_losses_unet = torch.zeros([6])
+            mean_losses_mofa = torch.zeros([6])
 
-torch.save(model_dict, output_path, 'model' + '.tar')
+model_dict = trainer.deca.model_dict()
+model_dict['opt'] = opt.state_dict()
+model_dict['global_step'] = ct
+model_dict['batch_size'] = batch
+#torch.save(model_dict, output_path, 'model_{:06d}.tar'.format(ct))
+

@@ -2,8 +2,6 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/FLAME_PyTorch" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/face-parsing.PyTorch" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/face_toolbox_keras" vcs="Git" />
   </component>
 </project>
