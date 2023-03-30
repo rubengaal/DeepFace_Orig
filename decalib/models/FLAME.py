@@ -21,18 +21,23 @@ import torch.nn.functional as F
 
 from .lbs import lbs, batch_rodrigues, vertices2landmarks, rot_mat_to_euler
 
+
 def to_tensor(array, dtype=torch.float32):
     if 'torch.tensor' not in str(type(array)):
         return torch.tensor(array, dtype=dtype)
+
+
 def to_np(array, dtype=np.float32):
     if 'scipy.sparse' in str(type(array)):
         array = array.todense()
     return np.array(array, dtype=dtype)
 
+
 class Struct(object):
     def __init__(self, **kwargs):
         for key, val in kwargs.items():
             setattr(self, key, val)
+
 
 class FLAME(nn.Module):
     """
@@ -40,6 +45,7 @@ class FLAME(nn.Module):
     Given flame parameters this class generates a differentiable FLAME function
     which outputs the a mesh and 2D/3D facial landmarks
     """
+
     def __init__(self, config):
         super(FLAME, self).__init__()
         print("creating the FLAME Decoder")
@@ -53,7 +59,7 @@ class FLAME(nn.Module):
         self.register_buffer('v_template', to_tensor(to_np(flame_model.v_template), dtype=self.dtype))
         # The shape components and expression
         shapedirs = to_tensor(to_np(flame_model.shapedirs), dtype=self.dtype)
-        shapedirs = torch.cat([shapedirs[:,:,:config.n_shape], shapedirs[:,:,300:300+config.n_exp]], 2)
+        shapedirs = torch.cat([shapedirs[:, :, :config.n_shape], shapedirs[:, :, 300:300 + config.n_exp]], 2)
         self.register_buffer('shapedirs', shapedirs)
         # The pose components
         num_pose_basis = flame_model.posedirs.shape[-1]
@@ -61,7 +67,8 @@ class FLAME(nn.Module):
         self.register_buffer('posedirs', to_tensor(to_np(posedirs), dtype=self.dtype))
         # 
         self.register_buffer('J_regressor', to_tensor(to_np(flame_model.J_regressor), dtype=self.dtype))
-        parents = to_tensor(to_np(flame_model.kintree_table[0])).long(); parents[0] = -1
+        parents = to_tensor(to_np(flame_model.kintree_table[0])).long();
+        parents[0] = -1
         self.register_buffer('parents', parents)
         self.register_buffer('lbs_weights', to_tensor(to_np(flame_model.weights), dtype=self.dtype))
 
@@ -77,19 +84,22 @@ class FLAME(nn.Module):
         lmk_embeddings = np.load(config.flame_lmk_embedding_path, allow_pickle=True, encoding='latin1')
         lmk_embeddings = lmk_embeddings[()]
         self.register_buffer('lmk_faces_idx', torch.from_numpy(lmk_embeddings['static_lmk_faces_idx']).long())
-        self.register_buffer('lmk_bary_coords', torch.from_numpy(lmk_embeddings['static_lmk_bary_coords']).to(self.dtype))
+        self.register_buffer('lmk_bary_coords',
+                             torch.from_numpy(lmk_embeddings['static_lmk_bary_coords']).to(self.dtype))
         self.register_buffer('dynamic_lmk_faces_idx', lmk_embeddings['dynamic_lmk_faces_idx'].long())
         self.register_buffer('dynamic_lmk_bary_coords', lmk_embeddings['dynamic_lmk_bary_coords'].to(self.dtype))
         self.register_buffer('full_lmk_faces_idx', torch.from_numpy(lmk_embeddings['full_lmk_faces_idx']).long())
-        self.register_buffer('full_lmk_bary_coords', torch.from_numpy(lmk_embeddings['full_lmk_bary_coords']).to(self.dtype))
+        self.register_buffer('full_lmk_bary_coords',
+                             torch.from_numpy(lmk_embeddings['full_lmk_bary_coords']).to(self.dtype))
 
-        neck_kin_chain = []; NECK_IDX=1
+        neck_kin_chain = [];
+        NECK_IDX = 1
         curr_idx = torch.tensor(NECK_IDX, dtype=torch.long)
         while curr_idx != -1:
             neck_kin_chain.append(curr_idx)
             curr_idx = self.parents[curr_idx]
         self.register_buffer('neck_kin_chain', torch.stack(neck_kin_chain))
-        
+
     def _find_dynamic_lmk_idx_and_bcoords(self, pose, dynamic_lmk_faces_idx,
                                           dynamic_lmk_b_coords,
                                           neck_kin_chain, dtype=torch.float32):
@@ -168,8 +178,8 @@ class FLAME(nn.Module):
 
     def seletec_3d68(self, vertices):
         landmarks3d = vertices2landmarks(vertices, self.faces_tensor,
-                                       self.full_lmk_faces_idx.repeat(vertices.shape[0], 1),
-                                       self.full_lmk_bary_coords.repeat(vertices.shape[0], 1, 1))
+                                         self.full_lmk_faces_idx.repeat(vertices.shape[0], 1),
+                                         self.full_lmk_bary_coords.repeat(vertices.shape[0], 1, 1))
         return landmarks3d
 
     def forward(self, shape_params=None, expression_params=None, pose_params=None, eye_pose_params=None):
@@ -188,7 +198,8 @@ class FLAME(nn.Module):
         if eye_pose_params is None:
             eye_pose_params = self.eye_pose.expand(batch_size, -1)
         betas = torch.cat([shape_params, expression_params], dim=1)
-        full_pose = torch.cat([pose_params[:, :3], self.neck_pose.expand(batch_size, -1), pose_params[:, 3:], eye_pose_params], dim=1)
+        full_pose = torch.cat(
+            [pose_params[:, :3], self.neck_pose.expand(batch_size, -1), pose_params[:, 3:], eye_pose_params], dim=1)
         template_vertices = self.v_template.unsqueeze(0).expand(batch_size, -1, -1)
 
         vertices, _ = lbs(betas, full_pose, template_vertices,
@@ -198,7 +209,7 @@ class FLAME(nn.Module):
 
         lmk_faces_idx = self.lmk_faces_idx.unsqueeze(dim=0).expand(batch_size, -1)
         lmk_bary_coords = self.lmk_bary_coords.unsqueeze(dim=0).expand(batch_size, -1, -1)
-        
+
         dyn_lmk_faces_idx, dyn_lmk_bary_coords = self._find_dynamic_lmk_idx_and_bcoords(
             full_pose, self.dynamic_lmk_faces_idx,
             self.dynamic_lmk_bary_coords,
@@ -207,13 +218,14 @@ class FLAME(nn.Module):
         lmk_bary_coords = torch.cat([dyn_lmk_bary_coords, lmk_bary_coords], 1)
 
         landmarks2d = vertices2landmarks(vertices, self.faces_tensor,
-                                       lmk_faces_idx,
-                                       lmk_bary_coords)
+                                         lmk_faces_idx,
+                                         lmk_bary_coords)
         bz = vertices.shape[0]
         landmarks3d = vertices2landmarks(vertices, self.faces_tensor,
-                                       self.full_lmk_faces_idx.repeat(bz, 1),
-                                       self.full_lmk_bary_coords.repeat(bz, 1, 1))
+                                         self.full_lmk_faces_idx.repeat(bz, 1),
+                                         self.full_lmk_bary_coords.repeat(bz, 1, 1))
         return vertices, landmarks2d, landmarks3d
+
 
 class FLAMETex(nn.Module):
     """
@@ -222,6 +234,7 @@ class FLAMETex(nn.Module):
     FLAME texture converted from BFM:
     https://github.com/TimoBolkart/BFM_to_FLAME
     """
+
     def __init__(self, config):
         super(FLAMETex, self).__init__()
         if config.tex_type == 'BFM':
@@ -239,16 +252,16 @@ class FLAMETex(nn.Module):
             n_pc = 200
             tex_path = config.flame_tex_path
             tex_space = np.load(tex_path)
-            texture_mean = tex_space[mu_key].reshape(1, -1)/255.
-            texture_basis = tex_space[pc_key].reshape(-1, n_pc)/255.
+            texture_mean = tex_space[mu_key].reshape(1, -1) / 255.
+            texture_basis = tex_space[pc_key].reshape(-1, n_pc) / 255.
         else:
             print('texture type ', config.tex_type, 'not exist!')
             raise NotImplementedError
 
         n_tex = config.n_tex
         num_components = texture_basis.shape[1]
-        texture_mean = torch.from_numpy(texture_mean).float()[None,...]
-        texture_basis = torch.from_numpy(texture_basis[:,:n_tex]).float()[None,...]
+        texture_mean = torch.from_numpy(texture_mean).float()[None, ...]
+        texture_basis = torch.from_numpy(texture_basis[:, :n_tex]).float()[None, ...]
         self.register_buffer('texture_mean', texture_mean)
         self.register_buffer('texture_basis', texture_basis)
 
@@ -257,8 +270,8 @@ class FLAMETex(nn.Module):
         texcode: [batchsize, n_tex]
         texture: [bz, 3, 256, 256], range: 0-1
         '''
-        texture = self.texture_mean + (self.texture_basis*texcode[:,None,:]).sum(-1)
-        texture = texture.reshape(texcode.shape[0], 512, 512, 3).permute(0,3,1,2)
+        texture = self.texture_mean + (self.texture_basis * texcode[:, None, :]).sum(-1)
+        texture = texture.reshape(texcode.shape[0], 512, 512, 3).permute(0, 3, 1, 2)
         texture = F.interpolate(texture, [256, 256])
-        texture = texture[:,[2,1,0], :,:]
+        texture = texture[:, [2, 1, 0], :, :]
         return texture

@@ -96,7 +96,8 @@ class Trainer(object):
                 if key in checkpoint.keys():
                     util.copy_state_dict(model_dict[key], checkpoint[key])
             util.copy_state_dict(self.opt.state_dict(), checkpoint['opt'])
-            self.global_step = checkpoint['global_step']
+            #self.global_step = checkpoint['global_step']
+            self.global_step = 1
             logger.info(f"resume training from {os.path.join(self.cfg.output_dir, 'model.tar')}")
             logger.info(f"training start from step {self.global_step}")
         # load model weights only
@@ -381,12 +382,12 @@ class Trainer(object):
         logger.info('---- training data numbers: ', len(self.train_dataset))
 
         self.train_dataloader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True,
-                            num_workers=self.cfg.dataset.num_workers,
+                            num_workers=0,
                             pin_memory=True,
                             drop_last=True)
         self.train_iter = iter(self.train_dataloader)
         self.val_dataloader = DataLoader(self.val_dataset, batch_size=8, shuffle=True,
-                            num_workers=2,
+                            num_workers=0,
                             pin_memory=True,
                             drop_last=False)
         self.val_iter = iter(self.val_dataloader)

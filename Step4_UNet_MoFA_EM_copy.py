@@ -54,22 +54,17 @@ par.add_argument('--cfg', type=str, default='configs/release_version/deca_coarse
 args = par.parse_args()
 cfg = parse_args()
 
-if cfg.cfg_file is not None:
-    exp_name = cfg.cfg_file.split('/')[-1].split('.')[0]
-    cfg.exp_name = exp_name
-
 GPU_no = args.gpu
 
 dist_weight = {'neighbour': 15, 'dist': 3, 'area': 0.5, 'preserve': 0.25, 'binary': 10}
+
 ct = args.pretrained_model  # load trained mofa model
-
 deca = DECA(cfg)
-trainer = Trainer(model=deca, config=cfg)
-
 output_name = 'Deca_UNet'
 
 device = torch.device("cuda:0") if torch.cuda.is_available() else "cpu"
 
+trainer = Trainer(model=deca, config=cfg)
 logger.add(os.path.join(trainer.cfg.output_dir, trainer.cfg.train.log_dir, 'deca_unet_train.log'))
 
 begin_learning_rate = args.learning_rate
@@ -127,6 +122,24 @@ test_batch_num = 2
 
 cos = torch.nn.CosineSimilarity(dim=1, eps=1e-6)
 
+'''-------------
+  Load Dataset
+-------------'''
+
+# train_dataset = build_datasets.build_train(cfg.dataset)
+#
+# train_dataloader = DataLoader(train_dataset, batch_size=batch, shuffle=True,
+#                               num_workers=0,
+#                               pin_memory=True,
+#                               drop_last=True)
+#
+# train_iter = iter(train_dataloader)
+#
+# testset = load_dataset.CelebDataset(device=torch.device('cuda'), train=True, height=cfg.dataset.image_size,
+#                                     width=cfg.dataset.image_size, scale=[cfg.dataset.scale_min, cfg.dataset.scale_max])
+# testloader = torch.utils.data.DataLoader(testset, batch_size=batch, shuffle=False, num_workers=0,pin_memory=True,
+#                             drop_last=True)
+
 # 3dmm data
 '''----------------
 Prepare Network and Optimizer
@@ -137,6 +150,15 @@ Prepare Network and Optimizer
 '''----------------------------------
  Fixed Testing Images for Observation
 ----------------------------------'''
+# test_input_images = []
+# test_landmarks = []
+# test_landmark_masks = []
+# for i_test, data in enumerate(testloader, 0):
+#     images, landmarks = data
+#     images, landmarks = images.cuda(), landmarks.cuda()
+#     test_input_images += [images]
+#     test_landmarks += [landmarks]
+# util.write_tiled_image(torch.cat(test_input_images, dim=0), output_path + 'test_gt.png', 10)
 
 
 def occlusionPhotometricLossWithoutBackground(gt, rendered, fgmask, standardDeviation=0.043,
@@ -195,7 +217,7 @@ Network Forward
 
 
 #################################################################
-def proc_mofaunet(batch, images, landmarks, render_mode, train_net=False, occlusion_mode=False, valid_mask=None,
+def proc_mofaunet(batch,images, landmarks, render_mode, train_net=False, occlusion_mode=False, valid_mask=None,
                   image_org=None, is_cutmix_mode=False):
     # valid_mask: 1 indicating unoccluded part of faces, vice versa
     '''
@@ -232,6 +254,16 @@ def proc_mofaunet(batch, images, landmarks, render_mode, train_net=False, occlus
     if train_net == 'unet':
         mask_binary_loss = (0.5 - torch.mean(torch.norm(valid_loss_mask - 0.5, 2, 1)))
         loss_unet = mask_binary_loss * dist_weight['binary'] + bg_unet_loss * dist_weight['area']
+    if train_net == 'mofa':
+        deca_batch = {}
+        deca_batch['image'] = images
+        deca_batch['landmark'] = landmarks
+        deca_batch['mask'] = unet_est_mask
+
+        #d_losses, paramdict = trainer.training_step(deca_batch, batchn, training_type='detail')
+        #c_losses, paramdict = trainer.training_step(deca_batch, batchn, training_type='coarse')
+
+        #loss_mofa = c_losses['all_loss'] + d_losses['all_loss']
 
     if train_net == False:
         mask_binary_loss = (0.5 - torch.mean(torch.norm(valid_loss_mask - 0.5, 2, 1)))
@@ -280,19 +312,192 @@ def proc_mofaunet(batch, images, landmarks, render_mode, train_net=False, occlus
 '''-----------------------------------------
 load pretrained model and continue training
 -----------------------------------------'''
+if ct != 0:
 
-unet_model_path = current_path + '\\MoFA_UNet_Save\\Pretrain_UNet' + '\\unet_mask_000070.model'
-unet_for_mask = torch.load(unet_model_path, map_location='cuda:{}'.format(util.device_ids[GPU_no]))
+    trained_model_path = output_path + 'model_{:06d}.tar'.format(ct)
+    #trainer.load_checkpoint(ct);
+    unet_model_path = output_path + 'unet_{:06d}.model'.format(ct)
+    unet_for_mask = torch.load(unet_model_path, map_location='cuda:{}'.format(util.device_ids[GPU_no]))
 
-print('Loading pre-trained unet: \n' + unet_model_path)
+
+else:
+    trained_model_path = current_path + '/decalib/pretrain/' + 'deca.tar'
+    # enc_net = torch.load(trained_model_path, map_location='cuda:{}'.format(util.device_ids[GPU_no]))
+    unet_model_path = current_path + '\\MoFA_UNet_Save\\Pretrain_UNet' + '\\unet_mask_000070.model'
+    unet_for_mask = torch.load(unet_model_path, map_location='cuda:{}'.format(util.device_ids[GPU_no]))
+
+print('Loading pre-trained unet: \n' + trained_model_path + '\n' + unet_model_path)
 
 '''----------
 Set Optimizer
 ----------'''
+# optimizer_mofa = optim.Adadelta(enc_net.parameters(), lr=mofa_lr_begin)
 optimizer_unet = optim.Adadelta(unet_for_mask.parameters(), lr=unet_lr_begin)
+
 scheduler_unet = torch.optim.lr_scheduler.StepLR(optimizer_unet, step_size=decay_step_size, gamma=decay_rate_unet)
 
+# opt = torch.optim.Adam(
+#     list(deca.E_detail.parameters()) + \
+#     list(deca.D_detail.parameters()),
+#     lr=1e-4,
+#     amsgrad=False)
+#
+# scheduler_deca = torch.optim.lr_scheduler.StepLR(opt, step_size=decay_step_size, gamma=0.99)
+
 print('Training ...')
+# start = time.time()
+# mean_losses_mofa = torch.zeros([6])
+# mean_losses_unet = torch.zeros([6])
+
+# trainset = load_dataset.CelebDataset(device=torch.device('cuda'), train=True, height=cfg.dataset.image_size,
+#                                     width=cfg.dataset.image_size, scale=[cfg.dataset.scale_min, cfg.dataset.scale_max])
+
+
+# def count_parameters(model):
+#     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+# for ep in range(0, epoch):
+#
+#     trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch, shuffle=True, num_workers=0,pin_memory=True,
+#                             drop_last=True)
+#
+#     for i, data in enumerate(trainloader, 0):
+#
+#         '''-------------------------
+#         Save images for observation
+#         --------------------------'''
+#         a = count_parameters(deca)
+#         b = count_parameters(unet_for_mask)
+#         if (ct - ct_begin) % 3 == 0:  # 1000
+#             deca.eval()
+#             unet_for_mask.eval()
+#             test_raster_images = []
+#             valid_loss_mask_temp = []
+#
+#             for images, landmarks in zip(test_input_images, test_landmarks):
+#                 with torch.no_grad():
+#                     # torch.permute(landmarks, (0, 2, 1))
+#                     _, _, raster_image, raster_mask, fg_mask, valid_loss_mask = proc_mofaunet(images, i, images,
+#                                                                                               landmarks, True,
+#                                                                                               False)
+#
+#                     test_raster_images += [
+#                         images * (1 - raster_mask.unsqueeze(1)) + raster_image * raster_mask.unsqueeze(1)]
+#                     valid_loss_mask_temp += [valid_loss_mask]
+#
+#             util.write_tiled_image(torch.cat(test_raster_images, dim=0), output_path + 'test_image_{}.png'.format(ct),
+#                                    10)
+#             util.write_tiled_image(torch.cat(valid_loss_mask_temp, dim=0),
+#                                    output_path + 'valid_loss_mask_{}.png'.format(ct), 10)
+#
+#             '''-------------------------
+#              Save Model every 5000 iters
+#             --------------------------'''
+#             if (ct - ct_begin) % 6 == 0 and ct > ct_begin:  # 10000
+#                 # torch.save(enc_net, output_path + 'enc_net_{:06d}.model'.format(ct))
+#                 model_dict = trainer.deca.model_dict()
+#                 model_dict['opt'] = opt.state_dict()
+#                 model_dict['global_step'] = ct
+#                 model_dict['batch_size'] = batch
+#                 torch.save(model_dict, os.path.join(output_path, 'deca' + '.tar'))
+#                 torch.save(unet_for_mask, output_path + 'unet_{:06d}.model'.format(ct))
+#
+#             # validating
+#             '''-------------------------
+#             Validate Model every 1000 iters
+#             --------------------------'''
+#             if (ct - ct_begin) % 6 == 0 and ct > ct_begin:  # 5000
+#                 print('Training mode:' + output_name)
+#                 c_test = 0
+#                 mean_test_losses = torch.zeros([6])
+#
+#                 for i_test, data_test in enumerate(testloader, 0):
+#                     image, landmark = data_test
+#                     image, landmark = image.cuda(), landmark.cuda()
+#
+#                     c_test += 1
+#                     with torch.no_grad():
+#                         loss_, losses_return_, _, _, _, _ = proc_mofaunet(data, i, image, landmark, True, False)
+#                         mean_test_losses += losses_return_
+#                 mean_test_losses = mean_test_losses / c_test
+#                 str = 'test loss:{}'.format(ct)
+#                 for loss_temp in losses_return_:
+#                     str += ' {:05f}'.format(loss_temp)
+#                 print(str)
+#                 writer_test.writerow(str)
+#
+#             fid_train.close()
+#             fid_train = open(loss_log_path_train, 'a')
+#             writer_train = csv.writer(fid_train, lineterminator="\r\n")
+#
+#             fid_test.close()
+#             fid_test = open(loss_log_path_test, 'a')
+#             writer_test = csv.writer(fid_test, lineterminator="\r\n")
+#
+#         '''-------------------------
+#         Model Training
+#         --------------------------'''
+#
+#         images, landmarks = data
+#         images, landmarks = images.cuda(), landmarks.cuda()
+#         #landmarks = torch.permute(landmarks, (0,2,1))
+#
+#         if images.shape[0] != batch:
+#             continue
+#         if ct % 10 > 5:  # 30000 > 5000
+#             deca.train()
+#             unet_for_mask.eval()
+#             loss_mofa, losses_return_mofa, _, _, _, _ = proc_mofaunet(data, i, images, landmarks, True, 'mofa')
+#             loss_mofa.backward()
+#             opt.step()
+#
+#             mean_losses_mofa += losses_return_mofa
+#             # optimizer_mofa.zero_grad()
+#         else:
+#             unet_for_mask.train()
+#             deca.eval()
+#             loss_unet, losses_return_unet, _, _, _, _ = proc_mofaunet(data, i, images, landmarks, True, 'unet')
+#             loss_unet.backward()
+#             optimizer_unet.step()
+#
+#             # optimizer_unet.zero_grad()
+#             mean_losses_unet += losses_return_unet
+#         ct += 1
+#         scheduler_unet.step()
+#         scheduler_deca.step()
+#         optimizer_unet.zero_grad()
+#         opt.zero_grad()
+#
+#         '''-------------------------
+#         Show Training Loss
+#         --------------------------'''
+#
+#         if (ct - ct_begin) % 10 == 0 and ct > ct_begin:  # 100
+#             end = time.time()
+#             mean_losses_unet = mean_losses_unet / 10
+#             mean_losses_mofa = mean_losses_mofa / 10
+#             str = 'deca loss:{}'.format(ct)
+#             for loss_temp in mean_losses_mofa:
+#                 str += ' {:05f}'.format(loss_temp)
+#             str += '\nunet loss:{}'.format(ct)
+#             for loss_temp in mean_losses_unet:
+#                 str += ' {:05f}'.format(loss_temp)
+#             str += ' time: {}'.format(end - start)
+#             print(str)
+#             writer_train.writerow(str)
+#             start = time.time()
+#             mean_losses_unet = torch.zeros([6])
+#             mean_losses_mofa = torch.zeros([6])
+#
+# model_dict = trainer.deca.model_dict()
+# model_dict['opt'] = opt.state_dict()
+# model_dict['global_step'] = ct
+# model_dict['batch_size'] = batch
+# torch.save(model_dict, os.path.join(output_path, 'deca' + '.tar'))
+
+
+#def fit():
 trainer.prepare_data()
 iters_every_epoch = int(len(trainer.train_dataset) / trainer.batch_size)
 start_epoch = trainer.global_step // iters_every_epoch
@@ -316,55 +521,51 @@ for epoch in range(start_epoch, trainer.cfg.train.max_epochs):
             trainer.opt.zero_grad(set_to_none=True)
             all_loss.backward()
             trainer.opt.step()
-
+        else:
+            unet_for_mask.train()
+            deca.eval()
+            images = batch['image']
+            landmarks = batch['landmark']
+            loss_unet, losses_return_unet, _, _, _, _ = proc_mofaunet(batch, images, landmarks, True, 'unet') #TODO swap data and batch
+            optimizer_unet.zero_grad()
+            loss_unet.backward()
+            optimizer_unet.step()
+        if trainer.global_step % trainer.cfg.train.log_steps == 0:
             loss_info = f"ExpName: DECA-{trainer.cfg.exp_name} \nEpoch: {epoch}, Iter: {step}/{iters_every_epoch}, Time: {datetime.now().strftime('%Y-%m-%d-%H:%M:%S')} \n"
             for k, v in losses.items():
                 loss_info = loss_info + f'{k}: {v:.4f}, '
                 if trainer.cfg.train.write_summary:
                     trainer.writer.add_scalar('train_loss/' + k, v, global_step=trainer.global_step)
             logger.info(loss_info)
-        else:
-            unet_for_mask.train()
-            deca.eval()
-            images = batch['image']
-            landmarks = batch['landmark']
-            images = images.cuda()
-            landmarks = landmarks.cuda()
-            loss_unet, losses_return_unet, _, _, _, _ = proc_mofaunet(batch, images, landmarks, True,
-                                                                      'unet')  # TODO swap data and batch
-            optimizer_unet.zero_grad()
-            loss_unet.backward()
-            optimizer_unet.step()
 
             loss_info = f"ExpName: Unet \nEpoch: {epoch}, Iter: {step}/{iters_every_epoch}, Time: {datetime.now().strftime('%Y-%m-%d-%H:%M:%S')} \n"
-            for loss_temp in losses_return_unet:
+            for loss_temp in loss_unet:
                 loss_info = ' {:05f}'.format(loss_temp)
-                #if trainer.cfg.train.write_summary:
-                    #trainer.writer.add_scalar('train_loss/' + loss_temp, global_step=trainer.global_step)
+                if trainer.cfg.train.write_summary:
+                    trainer.writer.add_scalar('train_loss/' + loss_temp, global_step=trainer.global_step)
             logger.info(loss_info)
-
         '''-------------------------
         Save images for observation
         --------------------------'''
-        # if trainer.global_step % 5000 == 0:
-        #     visind = list(range(1))
-        #     shape_images = trainer.deca.render.render_shape(opdict['verts'][visind], opdict['trans_verts'][visind])
-        #     visdict = {
-        #         'inputs': opdict['images'][visind],
-        #         'landmarks2d_gt': util.tensor_vis_landmarks(opdict['images'][visind], opdict['lmk'][visind],
-        #                                                     isScale=True),
-        #         'landmarks2d': util.tensor_vis_landmarks(opdict['images'][visind], opdict['landmarks2d'][visind],
-        #                                                  isScale=True),
-        #         'shape_images': shape_images,
-        #     }
-        #     if 'predicted_images' in opdict.keys():
-        #         visdict['predicted_images'] = opdict['predicted_images'][visind]
-        #     if 'predicted_detail_images' in opdict.keys():
-        #         visdict['predicted_detail_images'] = opdict['predicted_detail_images'][visind]
-        #     savepath = os.path.join(trainer.cfg.output_dir, trainer.cfg.train.vis_dir, f'{trainer.global_step:06}.jpg')
-        #     grid_image = util.visualize_grid(visdict, savepath, return_gird=True)
-        #     trainer.writer.add_image('train_images', (grid_image / 255.).astype(np.float32).transpose(2, 0, 1),
-        #                              trainer.global_step)
+        if trainer.global_step % trainer.cfg.train.vis_steps == 0:
+            visind = list(range(1))
+            shape_images = trainer.deca.render.render_shape(opdict['verts'][visind], opdict['trans_verts'][visind])
+            visdict = {
+                'inputs': opdict['images'][visind],
+                'landmarks2d_gt': util.tensor_vis_landmarks(opdict['images'][visind], opdict['lmk'][visind],
+                                                            isScale=True),
+                'landmarks2d': util.tensor_vis_landmarks(opdict['images'][visind], opdict['landmarks2d'][visind],
+                                                         isScale=True),
+                'shape_images': shape_images,
+            }
+            if 'predicted_images' in opdict.keys():
+                visdict['predicted_images'] = opdict['predicted_images'][visind]
+            if 'predicted_detail_images' in opdict.keys():
+                visdict['predicted_detail_images'] = opdict['predicted_detail_images'][visind]
+            savepath = os.path.join(trainer.cfg.output_dir, trainer.cfg.train.vis_dir, f'{trainer.global_step:06}.jpg')
+            grid_image = util.visualize_grid(visdict, savepath, return_gird=True)
+            trainer.writer.add_image('train_images', (grid_image / 255.).astype(np.float32).transpose(2, 0, 1),
+                                  trainer.global_step)
         '''-------------------------
         Save Model
         --------------------------'''
@@ -382,9 +583,9 @@ for epoch in range(start_epoch, trainer.cfg.train.max_epochs):
         '''-------------------------
         Validate Model
         --------------------------'''
-        if trainer.global_step % 5000 == 0:
+        if trainer.global_step % trainer.cfg.train.val_steps == 0:
             trainer.validation_step()
-        if trainer.global_step % 5000 == 0:
+        if trainer.global_step % trainer.cfg.train.eval_steps == 0:
             trainer.evaluate()
         '''-------------------------
         Show Training Loss
