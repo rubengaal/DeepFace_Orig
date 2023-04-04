@@ -89,10 +89,15 @@ class StandardRasterizer(nn.Module):
         pix_to_face = triangle_buffer[:,:,:,None].long()
         bary_coords = baryw_buffer[:,:,:,None,:]
         vismask = (pix_to_face > -1).float()
+
+        vismask_array = vismask.detach().cpu().numpy()
+
         D = attributes.shape[-1]
         attributes = attributes.clone(); attributes = attributes.view(attributes.shape[0]*attributes.shape[1], 3, attributes.shape[-1])
         N, H, W, K, _ = bary_coords.shape
         mask = pix_to_face == -1
+
+        mask_array = mask.detach().cpu().numpy()
         pix_to_face = pix_to_face.clone()
         pix_to_face[mask] = 0
         idx = pix_to_face.view(N * H * W * K, 1, 1).expand(N * H * W * K, 3, D)
@@ -101,7 +106,7 @@ class StandardRasterizer(nn.Module):
         pixel_vals[mask] = 0  # Replace masked values in output.
         pixel_vals = pixel_vals[:,:,:,0].permute(0,3,1,2)
         pixel_vals = torch.cat([pixel_vals, vismask[:,:,:,0][:,None,:,:]], dim=1)
-        return pixel_vals
+        return pixel_vals, mask
 class Pytorch3dRasterizer(nn.Module):
     ## TODO: add support for rendering non-squared images, since pytorc3d supports this now
     """  Borrowed from https://github.com/facebookresearch/pytorch3d
@@ -231,7 +236,7 @@ class SRenderY(nn.Module):
                                 face_normals], 
                                 -1)
         # rasterize
-        rendering = self.rasterizer(transformed_vertices, self.faces.expand(batch_size, -1, -1), attributes)
+        rendering, rasterized_masks = self.rasterizer(transformed_vertices, self.faces.expand(batch_size, -1, -1), attributes)
         
         ####
         # vis mask
@@ -273,8 +278,9 @@ class SRenderY(nn.Module):
             'normals': normals,
             'normal_images': normal_images*alpha_images,
             'transformed_normals': transformed_normals,
+            'rasterized_masks': rasterized_masks,
         }
-        
+
         return outputs
 
     def add_SHlight(self, normal_images, sh_coeff):
@@ -356,7 +362,7 @@ class SRenderY(nn.Module):
                         -1)
         # rasterize
         # import ipdb; ipdb.set_trace()
-        rendering = self.rasterizer(transformed_vertices, self.faces.expand(batch_size, -1, -1), attributes, h, w)
+        rendering, _ = self.rasterizer(transformed_vertices, self.faces.expand(batch_size, -1, -1), attributes, h, w)
 
         ####
         alpha_images = rendering[:, -1, :, :][:, None, :, :].detach()
@@ -403,7 +409,7 @@ class SRenderY(nn.Module):
         attributes = util.face_vertices(z, self.faces.expand(batch_size, -1, -1))
         # rasterize
         transformed_vertices[:,:,2] = transformed_vertices[:,:,2] + 10
-        rendering = self.rasterizer(transformed_vertices, self.faces.expand(batch_size, -1, -1), attributes)
+        rendering, _ = self.rasterizer(transformed_vertices, self.faces.expand(batch_size, -1, -1), attributes)
 
         ####
         alpha_images = rendering[:, -1, :, :][:, None, :, :].detach()
@@ -420,7 +426,7 @@ class SRenderY(nn.Module):
         # Attributes
         attributes = util.face_vertices(colors, self.faces.expand(batch_size, -1, -1))
         # rasterize
-        rendering = self.rasterizer(transformed_vertices, self.faces.expand(batch_size, -1, -1), attributes)
+        rendering, _ = self.rasterizer(transformed_vertices, self.faces.expand(batch_size, -1, -1), attributes)
         ####
         alpha_images = rendering[:, [-1], :, :].detach()
         images = rendering[:, :3, :, :]* alpha_images
@@ -434,5 +440,5 @@ class SRenderY(nn.Module):
         '''
         batch_size = vertices.shape[0]
         face_vertices = util.face_vertices(vertices, self.faces.expand(batch_size, -1, -1))
-        uv_vertices = self.uv_rasterizer(self.uvcoords.expand(batch_size, -1, -1), self.uvfaces.expand(batch_size, -1, -1), face_vertices)[:, :3]
+        uv_vertices = self.uv_rasterizer(self.uvcoords.expand(batch_size, -1, -1), self.uvfaces.expand(batch_size, -1, -1), face_vertices)[0][:, :3]
         return uv_vertices

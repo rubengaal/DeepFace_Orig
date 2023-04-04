@@ -338,7 +338,7 @@ class Trainer(object):
         from .datasets.now import NoWDataset
         dataset = NoWDataset(scale=(self.cfg.dataset.scale_min + self.cfg.dataset.scale_max)/2)
         dataloader = DataLoader(dataset, batch_size=8, shuffle=False,
-                            num_workers=8,
+                            num_workers=0,
                             pin_memory=True,
                             drop_last=False)
         faces = self.deca.flame.faces_tensor.cpu().numpy()

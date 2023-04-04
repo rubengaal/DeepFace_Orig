@@ -53,7 +53,6 @@ par.add_argument('--cfg', type=str, default='configs/release_version/deca_coarse
 
 args = par.parse_args()
 cfg = parse_args()
-
 if cfg.cfg_file is not None:
     exp_name = cfg.cfg_file.split('/')[-1].split('.')[0]
     cfg.exp_name = exp_name
@@ -127,10 +126,24 @@ test_batch_num = 2
 
 cos = torch.nn.CosineSimilarity(dim=1, eps=1e-6)
 
+render_net = ren.Renderer(32)
+net_recog = networks.define_net_recog(net_recog='r50', pretrained_path='models/ms1mv3_arcface_r50_fp16/backbone.pth')
+net_recog = net_recog.to(device)
+
 # 3dmm data
 '''----------------
 Prepare Network and Optimizer
 ----------------'''
+
+current_path = os.getcwd()
+model_path = current_path+'/basel_3DMM/model2017-1_bfm_nomouth.h5'
+
+obj = lob.Object3DMM(model_path,device,is_crop = True)
+A =  torch.Tensor([[9.06*224/2, 0,  (width-1)/2.0, 0, 9.06*224/2, (height-1)/2.0, 0, 0, 1]]).view(-1, 3, 3).to(device) #intrinsic camera mat
+T_ini = torch.Tensor([0, 0, 1000]).to(device)   #camera translation(direction of conversion will be set by flg later)
+sh_ini = torch.zeros(3, 9,device=device)    #offset of spherical harmonics coefficient
+sh_ini[:, 0] = 0.7 * 2 * math.pi
+sh_ini = sh_ini.reshape(-1)
 
 # renderer and encoder and UNet
 
@@ -215,15 +228,16 @@ def proc_mofaunet(batch, images, landmarks, render_mode, train_net=False, occlus
     codedict = deca.encode(images)  # code_dict.keys() = ['shape', 'tex', 'exp', 'pose', 'cam', 'light']
     opdict, visdict = deca.decode(codedict)  # tensor
 
+
     lm68 = opdict['landmarks2d']
-    raster_mask = generateMasks(images).cuda()  # TODO load it
+    raster_mask = opdict['rasterized_masks']
+    raster_mask = raster_mask.permute(0,3,2,1)
     raster_image = visdict['rendered_images']
     image_concatenated = torch.cat((raster_image, images), axis=1)
     unet_est_mask = unet_for_mask(image_concatenated)
-    valid_loss_mask = raster_mask.unsqueeze(1) * unet_est_mask
+    valid_loss_mask = raster_mask * unet_est_mask    #TODO: kell ez az unsqueeze? raster_mask.unsqueeze(1) * unet_est_mask
 
-    masked_rec_loss = torch.mean(torch.sum(torch.norm(valid_loss_mask * (images - raster_image), 2, 1)) / torch.clamp(
-        torch.sum(raster_mask.unsqueeze(1) * unet_est_mask), min=1))
+    masked_rec_loss = torch.mean(torch.sum(torch.norm(valid_loss_mask * (images - raster_image), 2, 1)) / torch.clamp(torch.sum(raster_mask.unsqueeze(1) * unet_est_mask), min=1))
 
     bg_unet_loss = torch.mean(torch.sum(raster_mask.unsqueeze(1) * (1 - unet_est_mask), axis=[2, 3]) / torch.clamp(
         torch.sum(raster_mask.unsqueeze(1), axis=[2, 3]), min=1))  # area loss
@@ -239,18 +253,17 @@ def proc_mofaunet(batch, images, landmarks, render_mode, train_net=False, occlus
             'cpu') * 0.5 + bg_unet_loss.to('cpu') * dist_weight[
                         'area'] + loss_mofa.to('cpu')
 
-    # I_target_masked = images * valid_loss_mask
-    # id_target_masked = net_recog(I_target_masked, landmarks.transpose(1, 2), is_shallow=True)
-    # id_target = net_recog(images, landmarks.transpose(1, 2), is_shallow=True)
-    # id_reconstruct_masked = net_recog(raster_image * valid_loss_mask, pred_lm=lm68.transpose(1, 2), is_shallow=True)
-    # I_IM_Per_loss = torch.mean(1 - cos(id_target, id_target_masked))
-    # IRM_IM_Per_loss = torch.mean(1 - cos(id_reconstruct_masked, id_target_masked))
-    # if train_net == 'unet':
-    #    loss_unet += I_IM_Per_loss * dist_weight['preserve'] + IRM_IM_Per_loss * dist_weight['dist']
-    # if train_net == False:
-    #    loss_test += I_IM_Per_loss * dist_weight['preserve'] + IRM_IM_Per_loss * dist_weight['dist']
-
-    # TODO maybe calculate loss for DECA
+    I_target_masked = images * valid_loss_mask
+    reducedlm = torch.mean(landmarks, -1)
+    id_target_masked = net_recog(I_target_masked, landmarks, is_shallow=True) #landmarks.transpose(1, 2)
+    id_target = net_recog(images, landmarks, is_shallow=True) #landmarks.transpose(1, 2)
+    id_reconstruct_masked = net_recog(raster_image * valid_loss_mask, pred_lm=lm68, is_shallow=True)
+    I_IM_Per_loss = torch.mean(1 - cos(id_target, id_target_masked))
+    IRM_IM_Per_loss = torch.mean(1 - cos(id_reconstruct_masked, id_target_masked))
+    if train_net == 'unet':
+        loss_unet += I_IM_Per_loss * dist_weight['preserve'] + IRM_IM_Per_loss * dist_weight['dist']
+    if train_net == False:
+        loss_test += I_IM_Per_loss * dist_weight['preserve'] + IRM_IM_Per_loss * dist_weight['dist']
 
     # force it to be binary mask
     loss_mask_neighbor = torch.zeros([1])
@@ -258,19 +271,15 @@ def proc_mofaunet(batch, images, landmarks, render_mode, train_net=False, occlus
         loss_mask_neighbor = adlosses.neighbor_unet_loss(images, valid_loss_mask, raster_image)
         loss_unet += loss_mask_neighbor * dist_weight['neighbour']
         loss = loss_unet
-    if train_net == 'mofa':
-        loss = loss_mofa
     if train_net == False:
         loss = loss_test
     losses_return = torch.FloatTensor(
         [loss.item(), masked_rec_loss.item(), bg_unet_loss.item(), \
          loss_mask_neighbor.item(),
-         mask_binary_loss.item(), loss_mofa])
+         mask_binary_loss.item()])
 
     if train_net == 'unet':
         return loss_unet, losses_return, raster_image, raster_mask, unet_est_mask, valid_loss_mask
-    if train_net == 'mofa':
-        return loss_mofa, losses_return, raster_image, raster_mask, unet_est_mask, valid_loss_mask
     if train_net == False:
         return loss_test, losses_return, raster_image, raster_mask, unet_est_mask, valid_loss_mask
 
@@ -311,13 +320,19 @@ for epoch in range(start_epoch, trainer.cfg.train.max_epochs):
         --------------------------'''
         if trainer.global_step % 10 > 5:
             unet_for_mask.eval()
+            codedict = deca.encode(batch['image'].cuda())
+            opdict, visdict = deca.decode(codedict)  # tensor
+            raster_image = visdict['rendered_images']
+            image_concatenated = torch.cat((raster_image, batch['image'].cuda()), axis=1)
+            unet_est_mask = unet_for_mask(image_concatenated)
+            batch['mask'] = unet_est_mask
             losses, opdict = trainer.training_step(batch, step)
             all_loss = losses['all_loss']
             trainer.opt.zero_grad(set_to_none=True)
             all_loss.backward()
             trainer.opt.step()
 
-            loss_info = f"ExpName: DECA-{trainer.cfg.exp_name} \nEpoch: {epoch}, Iter: {step}/{iters_every_epoch}, Time: {datetime.now().strftime('%Y-%m-%d-%H:%M:%S')} \n"
+            loss_info = f"ExpName: DECA- \nEpoch: {epoch}, Iter: {step}/{iters_every_epoch}, Time: {datetime.now().strftime('%Y-%m-%d-%H:%M:%S')} \n"
             for k, v in losses.items():
                 loss_info = loss_info + f'{k}: {v:.4f}, '
                 if trainer.cfg.train.write_summary:
@@ -330,15 +345,14 @@ for epoch in range(start_epoch, trainer.cfg.train.max_epochs):
             landmarks = batch['landmark']
             images = images.cuda()
             landmarks = landmarks.cuda()
-            loss_unet, losses_return_unet, _, _, _, _ = proc_mofaunet(batch, images, landmarks, True,
-                                                                      'unet')  # TODO swap data and batch
+            loss_unet, losses_return_unet, _, _, _, _ = proc_mofaunet(batch, images, landmarks, True, 'unet')  # TODO swap data and batch
             optimizer_unet.zero_grad()
             loss_unet.backward()
             optimizer_unet.step()
 
             loss_info = f"ExpName: Unet \nEpoch: {epoch}, Iter: {step}/{iters_every_epoch}, Time: {datetime.now().strftime('%Y-%m-%d-%H:%M:%S')} \n"
             for loss_temp in losses_return_unet:
-                loss_info = ' {:05f}'.format(loss_temp)
+                loss_info = loss_info + ' {:05f}'.format(loss_temp)
                 #if trainer.cfg.train.write_summary:
                     #trainer.writer.add_scalar('train_loss/' + loss_temp, global_step=trainer.global_step)
             logger.info(loss_info)
@@ -346,25 +360,25 @@ for epoch in range(start_epoch, trainer.cfg.train.max_epochs):
         '''-------------------------
         Save images for observation
         --------------------------'''
-        # if trainer.global_step % 5000 == 0:
-        #     visind = list(range(1))
-        #     shape_images = trainer.deca.render.render_shape(opdict['verts'][visind], opdict['trans_verts'][visind])
-        #     visdict = {
-        #         'inputs': opdict['images'][visind],
-        #         'landmarks2d_gt': util.tensor_vis_landmarks(opdict['images'][visind], opdict['lmk'][visind],
-        #                                                     isScale=True),
-        #         'landmarks2d': util.tensor_vis_landmarks(opdict['images'][visind], opdict['landmarks2d'][visind],
-        #                                                  isScale=True),
-        #         'shape_images': shape_images,
-        #     }
-        #     if 'predicted_images' in opdict.keys():
-        #         visdict['predicted_images'] = opdict['predicted_images'][visind]
-        #     if 'predicted_detail_images' in opdict.keys():
-        #         visdict['predicted_detail_images'] = opdict['predicted_detail_images'][visind]
-        #     savepath = os.path.join(trainer.cfg.output_dir, trainer.cfg.train.vis_dir, f'{trainer.global_step:06}.jpg')
-        #     grid_image = util.visualize_grid(visdict, savepath, return_gird=True)
-        #     trainer.writer.add_image('train_images', (grid_image / 255.).astype(np.float32).transpose(2, 0, 1),
-        #                              trainer.global_step)
+        if trainer.global_step % 5000 == 0:
+            visind = list(range(1))
+            shape_images = trainer.deca.render.render_shape(opdict['verts'][visind], opdict['trans_verts'][visind])
+            visdict = {
+                'inputs': opdict['images'][visind],
+                'landmarks2d_gt': util.tensor_vis_landmarks(opdict['images'][visind], opdict['lmk'][visind],
+                                                            isScale=True),
+                'landmarks2d': util.tensor_vis_landmarks(opdict['images'][visind], opdict['landmarks2d'][visind],
+                                                         isScale=True),
+                'shape_images': shape_images,
+            }
+            if 'predicted_images' in opdict.keys():
+                visdict['predicted_images'] = opdict['predicted_images'][visind]
+            if 'predicted_detail_images' in opdict.keys():
+                visdict['predicted_detail_images'] = opdict['predicted_detail_images'][visind]
+            savepath = os.path.join(trainer.cfg.output_dir, trainer.cfg.train.vis_dir, f'{trainer.global_step:06}.jpg')
+            grid_image = util.visualize_grid(visdict, savepath, return_gird=True)
+            trainer.writer.add_image('train_images', (grid_image / 255.).astype(np.float32).transpose(2, 0, 1),
+                                     trainer.global_step)
         '''-------------------------
         Save Model
         --------------------------'''
@@ -374,16 +388,20 @@ for epoch in range(start_epoch, trainer.cfg.train.max_epochs):
             model_dict['global_step'] = trainer.global_step
             model_dict['batch_size'] = trainer.batch_size
             torch.save(model_dict, os.path.join(trainer.cfg.output_dir, 'model' + '.tar'))
+            torch.save(unet_for_mask,os.path.join(trainer.cfg.output_dir, 'model_unet' + '.tar'))
+
             logger.info("SAVED MODEL")
-            #
+
             if trainer.global_step % trainer.cfg.train.checkpoint_steps * 10 == 0:
                 os.makedirs(os.path.join(trainer.cfg.output_dir, 'models'), exist_ok=True)
                 torch.save(model_dict, os.path.join(trainer.cfg.output_dir, 'models', f'{trainer.global_step:08}.tar'))
+                torch.save(unet_for_mask, os.path.join(trainer.cfg.output_dir, 'models', f'{trainer.global_step:08}_unet.tar'))
         '''-------------------------
         Validate Model
         --------------------------'''
         if trainer.global_step % 5000 == 0:
             trainer.validation_step()
+
         if trainer.global_step % 5000 == 0:
             trainer.evaluate()
         '''-------------------------

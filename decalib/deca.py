@@ -204,7 +204,8 @@ class DECA(nn.Module):
             opdict['rendered_images'] = ops['images']
             opdict['alpha_images'] = ops['alpha_images']
             opdict['normal_images'] = ops['normal_images']
-        
+            opdict['rasterized_masks'] = ops['rasterized_masks']
+
         if self.cfg.model.use_tex:
             opdict['albedo'] = albedo
             

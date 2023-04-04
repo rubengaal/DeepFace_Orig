@@ -206,6 +206,7 @@ def estimate_norm(lm_68p, H):
         lm                 --numpy.array  (68, 2), y direction is opposite to v direction
         H                  --int/float , image height
     """
+    lm_68p = lm_68p[ :,[0,1]]
     lm = extract_5p(lm_68p)
     #lm[:, -1] = H - 1 - lm[:, -1]
     tform = trans.SimilarityTransform()
