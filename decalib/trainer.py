@@ -43,6 +43,7 @@ import gc
 
 class Trainer(object):
     def __init__(self, model, config=None, device='cuda:0'):
+        self.current_val_batch = None
         if config is None:
             self.cfg = cfg
         else:
@@ -313,11 +314,14 @@ class Trainer(object):
         
     def validation_step(self):
         self.deca.eval()
+
         try:
             batch = next(self.val_iter)
         except:
             self.val_iter = iter(self.val_dataloader)
             batch = next(self.val_iter)
+
+        self.current_val_batch = batch
         images = batch['image'].to(self.device); images = images.view(-1, images.shape[-3], images.shape[-2], images.shape[-1]) 
         with torch.no_grad():
             codedict = self.deca.encode(images)
@@ -326,6 +330,7 @@ class Trainer(object):
         grid_image = util.visualize_grid(visdict, savepath, return_gird=True)
         self.writer.add_image('val_images', (grid_image/255.).astype(np.float32).transpose(2,0,1), self.global_step)
         self.deca.train()
+
 
     def evaluate(self):
         ''' NOW validation 

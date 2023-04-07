@@ -136,12 +136,14 @@ Prepare Network and Optimizer
 ----------------'''
 
 current_path = os.getcwd()
-model_path = current_path+'/basel_3DMM/model2017-1_bfm_nomouth.h5'
+model_path = current_path + '/basel_3DMM/model2017-1_bfm_nomouth.h5'
 
-obj = lob.Object3DMM(model_path,device,is_crop = True)
-A =  torch.Tensor([[9.06*224/2, 0,  (width-1)/2.0, 0, 9.06*224/2, (height-1)/2.0, 0, 0, 1]]).view(-1, 3, 3).to(device) #intrinsic camera mat
-T_ini = torch.Tensor([0, 0, 1000]).to(device)   #camera translation(direction of conversion will be set by flg later)
-sh_ini = torch.zeros(3, 9,device=device)    #offset of spherical harmonics coefficient
+obj = lob.Object3DMM(model_path, device, is_crop=True)
+A = torch.Tensor([[9.06 * 224 / 2, 0, (width - 1) / 2.0, 0, 9.06 * 224 / 2, (height - 1) / 2.0, 0, 0, 1]]).view(-1, 3,
+                                                                                                                3).to(
+    device)  # intrinsic camera mat
+T_ini = torch.Tensor([0, 0, 1000]).to(device)  # camera translation(direction of conversion will be set by flg later)
+sh_ini = torch.zeros(3, 9, device=device)  # offset of spherical harmonics coefficient
 sh_ini[:, 0] = 0.7 * 2 * math.pi
 sh_ini = sh_ini.reshape(-1)
 
@@ -164,42 +166,6 @@ def occlusionPhotometricLossWithoutBackground(gt, rendered, fgmask, standardDevi
     foregroundLogLikelihood = occlusionForegroundMask * fullForegroundLogLikelihood
     lh = torch.mean(foregroundLogLikelihood)
     return -lh, occlusionForegroundMask
-
-
-def generateMasks(images):
-    masks = []
-    for img in images:
-        # img = F.interpolate(img, size=(3,224,224))
-
-        # img = F.interpolate(img, size=[3,224,224])
-        im = img.cpu().detach().numpy()[..., ::-1]
-        im = im.transpose(1, 2, 0)
-        fp = face_parser.FaceParser()
-        parsing_map = fp.parse_face(im, bounding_box=None, with_detection=False)[0]
-        img_mask = np.array(parsing_map)
-
-        img_mask[img_mask == 1] = 1
-        img_mask[img_mask == 2] = 1
-        img_mask[img_mask == 3] = 1
-        img_mask[img_mask == 4] = 1
-        img_mask[img_mask == 5] = 1
-        img_mask[img_mask == 10] = 1
-        img_mask[img_mask == 11] = 1
-        img_mask[img_mask == 12] = 1
-        img_mask[img_mask == 13] = 1
-
-        img_mask[img_mask == 6] = 0
-        img_mask[img_mask == 7] = 0
-        img_mask[img_mask == 8] = 0
-        img_mask[img_mask == 9] = 0
-        img_mask[img_mask == 14] = 0
-        img_mask[img_mask == 15] = 0
-        img_mask[img_mask == 16] = 0
-        img_mask[img_mask == 17] = 0
-        img_mask[img_mask == 18] = 0
-
-        masks.append(img_mask)
-    return torch.ShortTensor(numpy.array(masks))
 
 
 '''-------------
@@ -228,16 +194,16 @@ def proc_mofaunet(batch, images, landmarks, render_mode, train_net=False, occlus
     codedict = deca.encode(images)  # code_dict.keys() = ['shape', 'tex', 'exp', 'pose', 'cam', 'light']
     opdict, visdict = deca.decode(codedict)  # tensor
 
-
     lm68 = opdict['landmarks2d']
     raster_mask = opdict['rasterized_masks']
-    raster_mask = raster_mask.permute(0,3,2,1)
+    raster_mask = raster_mask.permute(0, 3, 2, 1)
     raster_image = visdict['rendered_images']
     image_concatenated = torch.cat((raster_image, images), axis=1)
     unet_est_mask = unet_for_mask(image_concatenated)
-    valid_loss_mask = raster_mask * unet_est_mask    #TODO: kell ez az unsqueeze? raster_mask.unsqueeze(1) * unet_est_mask
+    valid_loss_mask = raster_mask * unet_est_mask  # TODO: kell ez az unsqueeze? raster_mask.unsqueeze(1) * unet_est_mask
 
-    masked_rec_loss = torch.mean(torch.sum(torch.norm(valid_loss_mask * (images - raster_image), 2, 1)) / torch.clamp(torch.sum(raster_mask.unsqueeze(1) * unet_est_mask), min=1))
+    masked_rec_loss = torch.mean(torch.sum(torch.norm(valid_loss_mask * (images - raster_image), 2, 1)) / torch.clamp(
+        torch.sum(raster_mask.unsqueeze(1) * unet_est_mask), min=1))
 
     bg_unet_loss = torch.mean(torch.sum(raster_mask.unsqueeze(1) * (1 - unet_est_mask), axis=[2, 3]) / torch.clamp(
         torch.sum(raster_mask.unsqueeze(1), axis=[2, 3]), min=1))  # area loss
@@ -249,21 +215,21 @@ def proc_mofaunet(batch, images, landmarks, render_mode, train_net=False, occlus
 
     if train_net == False:
         mask_binary_loss = (0.5 - torch.mean(torch.norm(valid_loss_mask - 0.5, 2, 1)))
-        loss_test = mask_binary_loss.to('cpu') * dist_weight['binary'] + masked_rec_loss.to(
-            'cpu') * 0.5 + bg_unet_loss.to('cpu') * dist_weight[
-                        'area'] + loss_mofa.to('cpu')
+        loss_test = mask_binary_loss.to(device) * dist_weight['binary'] + masked_rec_loss.to(
+            'cpu') * 0.5 + bg_unet_loss.to(device) * dist_weight[
+                        'area'] + loss_mofa.to(device)
 
     I_target_masked = images * valid_loss_mask
     reducedlm = torch.mean(landmarks, -1)
-    id_target_masked = net_recog(I_target_masked, landmarks, is_shallow=True) #landmarks.transpose(1, 2)
-    id_target = net_recog(images, landmarks, is_shallow=True) #landmarks.transpose(1, 2)
+    id_target_masked = net_recog(I_target_masked, landmarks, is_shallow=True)  # landmarks.transpose(1, 2)
+    id_target = net_recog(images, landmarks, is_shallow=True)  # landmarks.transpose(1, 2)
     id_reconstruct_masked = net_recog(raster_image * valid_loss_mask, pred_lm=lm68, is_shallow=True)
     I_IM_Per_loss = torch.mean(1 - cos(id_target, id_target_masked))
     IRM_IM_Per_loss = torch.mean(1 - cos(id_reconstruct_masked, id_target_masked))
     if train_net == 'unet':
         loss_unet += I_IM_Per_loss * dist_weight['preserve'] + IRM_IM_Per_loss * dist_weight['dist']
     if train_net == False:
-        loss_test += I_IM_Per_loss * dist_weight['preserve'] + IRM_IM_Per_loss * dist_weight['dist']
+        loss_test += I_IM_Per_loss.cuda() * dist_weight['preserve'] + IRM_IM_Per_loss.cuda() * dist_weight['dist']
 
     # force it to be binary mask
     loss_mask_neighbor = torch.zeros([1])
@@ -275,8 +241,7 @@ def proc_mofaunet(batch, images, landmarks, render_mode, train_net=False, occlus
         loss = loss_test
     losses_return = torch.FloatTensor(
         [loss.item(), masked_rec_loss.item(), bg_unet_loss.item(), \
-         loss_mask_neighbor.item(),
-         mask_binary_loss.item()])
+         loss_mask_neighbor.item(), mask_binary_loss.item(),I_IM_Per_loss.item(),IRM_IM_Per_loss.item()] )
 
     if train_net == 'unet':
         return loss_unet, losses_return, raster_image, raster_mask, unet_est_mask, valid_loss_mask
@@ -328,7 +293,8 @@ for epoch in range(start_epoch, trainer.cfg.train.max_epochs):
             batch['mask'] = unet_est_mask
             losses, opdict = trainer.training_step(batch, step)
             all_loss = losses['all_loss']
-            trainer.opt.zero_grad(set_to_none=True)
+
+
             all_loss.backward()
             trainer.opt.step()
 
@@ -345,16 +311,16 @@ for epoch in range(start_epoch, trainer.cfg.train.max_epochs):
             landmarks = batch['landmark']
             images = images.cuda()
             landmarks = landmarks.cuda()
-            loss_unet, losses_return_unet, _, _, _, _ = proc_mofaunet(batch, images, landmarks, True, 'unet')  # TODO swap data and batch
-            optimizer_unet.zero_grad()
+            loss_unet, losses_return_unet, _, _, _, _ = proc_mofaunet(batch, images, landmarks, True,
+                                                                      'unet')  # TODO swap data and batch
             loss_unet.backward()
             optimizer_unet.step()
 
             loss_info = f"ExpName: Unet \nEpoch: {epoch}, Iter: {step}/{iters_every_epoch}, Time: {datetime.now().strftime('%Y-%m-%d-%H:%M:%S')} \n"
             for loss_temp in losses_return_unet:
                 loss_info = loss_info + ' {:05f}'.format(loss_temp)
-                #if trainer.cfg.train.write_summary:
-                    #trainer.writer.add_scalar('train_loss/' + loss_temp, global_step=trainer.global_step)
+                # if trainer.cfg.train.write_summary:
+                # trainer.writer.add_scalar('train_loss/' + loss_temp, global_step=trainer.global_step)
             logger.info(loss_info)
 
         '''-------------------------
@@ -388,26 +354,45 @@ for epoch in range(start_epoch, trainer.cfg.train.max_epochs):
             model_dict['global_step'] = trainer.global_step
             model_dict['batch_size'] = trainer.batch_size
             torch.save(model_dict, os.path.join(trainer.cfg.output_dir, 'model' + '.tar'))
-            torch.save(unet_for_mask,os.path.join(trainer.cfg.output_dir, 'model_unet' + '.tar'))
+            torch.save(unet_for_mask, os.path.join(trainer.cfg.output_dir, 'model_unet' + '.tar'))
 
             logger.info("SAVED MODEL")
 
             if trainer.global_step % trainer.cfg.train.checkpoint_steps * 10 == 0:
                 os.makedirs(os.path.join(trainer.cfg.output_dir, 'models'), exist_ok=True)
                 torch.save(model_dict, os.path.join(trainer.cfg.output_dir, 'models', f'{trainer.global_step:08}.tar'))
-                torch.save(unet_for_mask, os.path.join(trainer.cfg.output_dir, 'models', f'{trainer.global_step:08}_unet.tar'))
+                torch.save(unet_for_mask,
+                           os.path.join(trainer.cfg.output_dir, 'models', f'{trainer.global_step:08}_unet.tar'))
         '''-------------------------
         Validate Model
         --------------------------'''
-        if trainer.global_step % 5000 == 0:
+        if trainer.global_step % 100 == 0: #5000
             trainer.validation_step()
+            val_batch = trainer.current_val_batch
+            val_images = val_batch['image'].cuda()
+            val_landmarks = val_batch['landmark'].cuda()
+            mean_test_losses = torch.zeros([7])
+            with torch.no_grad():
+                loss_, losses_return_, _, _, _, _ = proc_mofaunet(val_batch, val_images, val_landmarks, True, False)
+                mean_test_losses += losses_return_
+            mean_test_losses = mean_test_losses
+            str = 'test loss:{}'.format(trainer.global_step)
+            for loss_temp in losses_return_:
+                str += ' {:05f}'.format(loss_temp)
+            logger.info(str)
+
 
         if trainer.global_step % 5000 == 0:
             trainer.evaluate()
-        '''-------------------------
-        Show Training Loss
-        --------------------------'''
+
         trainer.global_step += 1
+
+        trainer.opt.zero_grad(set_to_none=True)
+        trainer.opt.step()
+
+        optimizer_unet.zero_grad()
+        optimizer_unet.step()
+
         logger.info(trainer.global_step)
         if trainer.global_step > trainer.cfg.train.max_steps:
             break
