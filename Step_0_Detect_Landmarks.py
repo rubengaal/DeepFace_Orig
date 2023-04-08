@@ -4,36 +4,38 @@ import face_alignment
 import csv
 from skimage import io
 import pandas as pd
-
+from tqdm import tqdm
+import torch
 '''------------------------------------
   Prepare Landmarks for Images
 ------------------------------------'''
 
 fa = face_alignment.FaceAlignment(face_alignment.LandmarksType._2D, device='cuda')
 
-root = 'Image_Root'
+root = 'D:/OE/szakdolgozat/celeba/celeba'
 
-dataset_path = root + '/Dataset'
+dataset_path = root + '/img_align_celeba/img_align_celeba'
 root_folder = os.listdir(dataset_path)
 
-partitions_file = open('Image_root/list_eval_partition.txt')
+partitions_file = open(root + '/list_eval_partition.csv')
 lines = partitions_file.readlines()
 
 partition_dict = {}
 
-for line in lines:
-    data = line.split(' ')
-    partition_dict[data[0]] = data[1]
+for line in tqdm(lines):
+    data = line.strip().split(',')
+    partition_dict.update({data[0]: data[1]})
 
-results = pd.read_csv(root + '/train_landmarks.csv')
-# for filename in root_folder:
-#     if (results[results.columns[0]] == filename).any():
-#         root_folder.remove(filename)
+#results = pd.read_csv(root + '/train_landmarks.csv')
+ #for filename in root_folder:
+ #    if (results[results.columns[0]] == filename).any():
+ #        root_folder.remove(filename)
 
 
-for filename in root_folder:
+for filename in tqdm(root_folder):
     input_img = io.imread(dataset_path + '/' + filename)
     det = fa.get_landmarks_from_image(input_img)
+
 
     partition = partition_dict[filename].strip()
 

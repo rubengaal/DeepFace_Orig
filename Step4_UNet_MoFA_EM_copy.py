@@ -135,21 +135,6 @@ for i_test, data_test in enumerate(testloader, 0):
     test_landmarks += [landmarks]
 util.write_tiled_image(torch.cat(test_input_images, dim=0), output_path + 'test_gt.png', 10)
 
-
-def occlusionPhotometricLossWithoutBackground(gt, rendered, fgmask, standardDeviation=0.043,
-                                              backgroundStDevsFromMean=3.0):
-    normalizer = (-3 / 2 * math.log(2 * math.pi) - 3 * math.log(standardDeviation))
-    fullForegroundLogLikelihood = (torch.sum(torch.pow(gt - rendered, 2),
-                                             axis=1)) * -0.5 / standardDeviation / standardDeviation + normalizer
-    uniformBackgroundLogLikelihood = math.pow(backgroundStDevsFromMean * standardDeviation,
-                                              2) * -0.5 / standardDeviation / standardDeviation + normalizer
-    occlusionForegroundMask = fgmask * (fullForegroundLogLikelihood > uniformBackgroundLogLikelihood).type(
-        torch.FloatTensor).cuda(util.device_ids[GPU_no])
-    foregroundLogLikelihood = occlusionForegroundMask * fullForegroundLogLikelihood
-    lh = torch.mean(foregroundLogLikelihood)
-    return -lh, occlusionForegroundMask
-
-
 def generateMasks(images):
     masks = []
     for img in tqdm(images):

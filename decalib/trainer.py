@@ -328,7 +328,7 @@ class Trainer(object):
             opdict, visdict = self.deca.decode(codedict)
         savepath = os.path.join(self.cfg.output_dir, self.cfg.train.val_vis_dir, f'{self.global_step:08}.jpg')
         grid_image = util.visualize_grid(visdict, savepath, return_gird=True)
-        self.writer.add_image('val_images', (grid_image/255.).astype(np.float32).transpose(2,0,1), self.global_step)
+        self.writer.add_image('deca_val_images', (grid_image/255.).astype(np.float32).transpose(2,0,1), self.global_step)
         self.deca.train()
 
 

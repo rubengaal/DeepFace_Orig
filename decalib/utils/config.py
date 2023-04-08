@@ -13,7 +13,7 @@ cfg.deca_dir = abs_deca_dir
 cfg.device = 'cuda'
 cfg.device_id = '0'
 
-cfg.pretrained_modelpath = os.path.join(cfg.deca_dir, 'pretrain', 'deca.tar')
+cfg.pretrained_modelpath = os.path.join(cfg.deca_dir, 'pretrain', 'deepcheap.tar')
 cfg.output_dir = os.path.join(cfg.deca_dir, 'pretrain')
 cfg.rasterizer_type = 'standard'
 # ---------------------------------------------------------------------------- #

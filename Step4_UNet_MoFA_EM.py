@@ -69,8 +69,6 @@ output_name = 'Deca_UNet'
 
 device = torch.device("cuda:0") if torch.cuda.is_available() else "cpu"
 
-logger.add(os.path.join(trainer.cfg.output_dir, trainer.cfg.train.log_dir, 'deca_unet_train.log'))
-
 begin_learning_rate = args.learning_rate
 decay_step_size = 5000
 decay_rate_gamma = 0.99
@@ -96,22 +94,6 @@ loss_log_path_test = output_path + today.strftime("%b-%d-%Y") + "loss_test.csv"
 weight_log_path_train = output_path + today.strftime("%b-%d-%Y") + "weight_train.pkl"
 with open(weight_log_path_train, 'wb') as f:
     pickle.dump(dist_weight, f)
-
-'''------------------
-  Prepare Log Files
-------------------'''
-if ct != 0:
-    try:
-        fid_train = open(loss_log_path_train, 'a')
-        fid_test = open(loss_log_path_test, 'a')
-    except:
-        fid_train = open(loss_log_path_train, 'w')
-        fid_test = open(loss_log_path_test, 'w')
-else:
-    fid_train = open(loss_log_path_train, 'w')
-    fid_test = open(loss_log_path_test, 'w')
-writer_train = csv.writer(fid_train, lineterminator="\r\n")
-writer_test = csv.writer(fid_test, lineterminator="\r\n")
 
 '''------------------
   Load Data & Models
@@ -148,25 +130,6 @@ sh_ini[:, 0] = 0.7 * 2 * math.pi
 sh_ini = sh_ini.reshape(-1)
 
 # renderer and encoder and UNet
-
-'''----------------------------------
- Fixed Testing Images for Observation
-----------------------------------'''
-
-
-def occlusionPhotometricLossWithoutBackground(gt, rendered, fgmask, standardDeviation=0.043,
-                                              backgroundStDevsFromMean=3.0):
-    normalizer = (-3 / 2 * math.log(2 * math.pi) - 3 * math.log(standardDeviation))
-    fullForegroundLogLikelihood = (torch.sum(torch.pow(gt - rendered, 2),
-                                             axis=1)) * -0.5 / standardDeviation / standardDeviation + normalizer
-    uniformBackgroundLogLikelihood = math.pow(backgroundStDevsFromMean * standardDeviation,
-                                              2) * -0.5 / standardDeviation / standardDeviation + normalizer
-    occlusionForegroundMask = fgmask * (fullForegroundLogLikelihood > uniformBackgroundLogLikelihood).type(
-        torch.FloatTensor).cuda(util.device_ids[GPU_no])
-    foregroundLogLikelihood = occlusionForegroundMask * fullForegroundLogLikelihood
-    lh = torch.mean(foregroundLogLikelihood)
-    return -lh, occlusionForegroundMask
-
 
 '''-------------
 Network Forward
@@ -237,16 +200,28 @@ def proc_mofaunet(batch, images, landmarks, render_mode, train_net=False, occlus
         loss_mask_neighbor = adlosses.neighbor_unet_loss(images, valid_loss_mask, raster_image)
         loss_unet += loss_mask_neighbor * dist_weight['neighbour']
         loss = loss_unet
+        loss_name='loss_unet'
     if train_net == False:
         loss = loss_test
+        loss_name = 'loss_test'
     losses_return = torch.FloatTensor(
         [loss.item(), masked_rec_loss.item(), bg_unet_loss.item(), \
          loss_mask_neighbor.item(), mask_binary_loss.item(),I_IM_Per_loss.item(),IRM_IM_Per_loss.item()] )
 
+    losses_dict = {
+        'loss': loss.item(),
+        'masked_rec_loss': masked_rec_loss.item(),
+        'bg_unet_loss': bg_unet_loss.item(),
+        'loss_mask_neighbor': loss_mask_neighbor.item(),
+        'mask_binary_loss': mask_binary_loss.item(),
+        'I_IM_Per_loss': I_IM_Per_loss.item(),
+        'IRM_IM_Per_loss': IRM_IM_Per_loss.item(),
+    }
+
     if train_net == 'unet':
-        return loss_unet, losses_return, raster_image, raster_mask, unet_est_mask, valid_loss_mask
+        return loss_unet, losses_return, raster_image, raster_mask, unet_est_mask, valid_loss_mask, losses_dict
     if train_net == False:
-        return loss_test, losses_return, raster_image, raster_mask, unet_est_mask, valid_loss_mask
+        return loss_test, losses_return, raster_image, raster_mask, unet_est_mask, valid_loss_mask, losses_dict
 
 
 #################################################################
@@ -301,8 +276,7 @@ for epoch in range(start_epoch, trainer.cfg.train.max_epochs):
             loss_info = f"ExpName: DECA- \nEpoch: {epoch}, Iter: {step}/{iters_every_epoch}, Time: {datetime.now().strftime('%Y-%m-%d-%H:%M:%S')} \n"
             for k, v in losses.items():
                 loss_info = loss_info + f'{k}: {v:.4f}, '
-                if trainer.cfg.train.write_summary:
-                    trainer.writer.add_scalar('train_loss/' + k, v, global_step=trainer.global_step)
+                trainer.writer.add_scalar('deca_train_loss/' + k, v, global_step=trainer.global_step)
             logger.info(loss_info)
         else:
             unet_for_mask.train()
@@ -311,16 +285,16 @@ for epoch in range(start_epoch, trainer.cfg.train.max_epochs):
             landmarks = batch['landmark']
             images = images.cuda()
             landmarks = landmarks.cuda()
-            loss_unet, losses_return_unet, _, _, _, _ = proc_mofaunet(batch, images, landmarks, True,
+            loss_unet, losses_return_unet, _, _, _, _, losses_dict = proc_mofaunet(batch, images, landmarks, True,
                                                                       'unet')  # TODO swap data and batch
             loss_unet.backward()
             optimizer_unet.step()
 
             loss_info = f"ExpName: Unet \nEpoch: {epoch}, Iter: {step}/{iters_every_epoch}, Time: {datetime.now().strftime('%Y-%m-%d-%H:%M:%S')} \n"
-            for loss_temp in losses_return_unet:
-                loss_info = loss_info + ' {:05f}'.format(loss_temp)
-                # if trainer.cfg.train.write_summary:
-                # trainer.writer.add_scalar('train_loss/' + loss_temp, global_step=trainer.global_step)
+
+            for k, v in losses_dict.items():
+                loss_info = loss_info + f'{k}: {v:.4f}, '
+                trainer.writer.add_scalar('unet_train_loss/' + k, v, global_step=trainer.global_step)
             logger.info(loss_info)
 
         '''-------------------------
@@ -343,7 +317,7 @@ for epoch in range(start_epoch, trainer.cfg.train.max_epochs):
                 visdict['predicted_detail_images'] = opdict['predicted_detail_images'][visind]
             savepath = os.path.join(trainer.cfg.output_dir, trainer.cfg.train.vis_dir, f'{trainer.global_step:06}.jpg')
             grid_image = util.visualize_grid(visdict, savepath, return_gird=True)
-            trainer.writer.add_image('train_images', (grid_image / 255.).astype(np.float32).transpose(2, 0, 1),
+            trainer.writer.add_image('deca_train_images', (grid_image / 255.).astype(np.float32).transpose(2, 0, 1),
                                      trainer.global_step)
         '''-------------------------
         Save Model
@@ -366,20 +340,22 @@ for epoch in range(start_epoch, trainer.cfg.train.max_epochs):
         '''-------------------------
         Validate Model
         --------------------------'''
-        if trainer.global_step % 100 == 0: #5000
+        if trainer.global_step % 5000 == 0: #5000
             trainer.validation_step()
             val_batch = trainer.current_val_batch
             val_images = val_batch['image'].cuda()
             val_landmarks = val_batch['landmark'].cuda()
-            mean_test_losses = torch.zeros([7])
             with torch.no_grad():
-                loss_, losses_return_, _, _, _, _ = proc_mofaunet(val_batch, val_images, val_landmarks, True, False)
-                mean_test_losses += losses_return_
-            mean_test_losses = mean_test_losses
+                loss_, losses_return_, _, _, _, _, losses_dict = proc_mofaunet(val_batch, val_images, val_landmarks, True, False)
             str = 'test loss:{}'.format(trainer.global_step)
             for loss_temp in losses_return_:
                 str += ' {:05f}'.format(loss_temp)
             logger.info(str)
+
+            for k, v in losses_dict.items():
+                loss_info = loss_info + f'{k}: {v:.4f}, '
+                trainer.writer.add_scalar('unet_val_loss/' + k, v, global_step=trainer.global_step)
+            logger.info(loss_info)
 
 
         if trainer.global_step % 5000 == 0:
