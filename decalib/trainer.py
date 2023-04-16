@@ -97,8 +97,7 @@ class Trainer(object):
                 if key in checkpoint.keys():
                     util.copy_state_dict(model_dict[key], checkpoint[key])
             util.copy_state_dict(self.opt.state_dict(), checkpoint['opt'])
-            #self.global_step = checkpoint['global_step']
-            self.global_step = 1
+            self.global_step = checkpoint['global_step']
             logger.info(f"resume training from {os.path.join(self.cfg.output_dir, 'model.tar')}")
             logger.info(f"training start from step {self.global_step}")
         # load model weights only
