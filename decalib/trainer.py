@@ -180,6 +180,8 @@ class Trainer(object):
             ############################# base shape
             predicted_landmarks = opdict['landmarks2d']
             if self.cfg.loss.useWlmk:
+                logger.info(predicted_landmarks.size())
+                logger.info(lmk.size())
                 self.losses['landmark'] = lossfunc.weighted_landmark_loss(predicted_landmarks, lmk)*self.cfg.loss.lmk
             else:    
                 self.losses['landmark'] = lossfunc.landmark_loss(predicted_landmarks, lmk)*self.cfg.loss.lmk
@@ -259,14 +261,15 @@ class Trainer(object):
 
             #--- extract texture
             uv_pverts = self.deca.render.world2uv(trans_verts).detach()
-            #uv_gt = F.grid_sample(torch.cat([images, masks], dim=1), uv_pverts.permute(0,2,3,1)[:,:,:,:2], mode='bilinear', align_corners=False)
-            #uv_texture_gt = uv_gt[:,:3,:,:].detach(); uv_mask_gt = uv_gt[:,3:,:,:].detach()
+            uv_gt = F.grid_sample(torch.cat([images, masks], dim=1), uv_pverts.permute(0,2,3,1)[:,:,:,:2], mode='bilinear', align_corners=False)
+            uv_texture_gt = uv_gt[:,:3,:,:].detach(); uv_mask_gt = uv_gt[:,3:,:,:].detach()
             # self-occlusion
             normals = util.vertex_normals(trans_verts, self.deca.render.faces.expand(batch_size, -1, -1))
             uv_pnorm = self.deca.render.world2uv(normals)
             uv_mask = (uv_pnorm[:,[-1],:,:] < -0.05).float().detach()
             ## combine masks
-            uv_vis_mask = uv_mask*self.deca.uv_face_eye_mask #uv_mask_gt*
+            uv_vis_mask = uv_mask_gt*uv_mask*self.deca.uv_face_eye_mask
+
 
             #### ----------------------- Losses
             self.detail_losses = {}
@@ -280,11 +283,11 @@ class Trainer(object):
             pi = 0
             new_size = 256
             uv_texture_patch = F.interpolate(uv_texture[:, :, self.face_attr_mask[pi][2]:self.face_attr_mask[pi][3], self.face_attr_mask[pi][0]:self.face_attr_mask[pi][1]], [new_size, new_size], mode='bilinear')
-            #uv_texture_gt_patch = F.interpolate(uv_texture_gt[:, :, self.face_attr_mask[pi][2]:self.face_attr_mask[pi][3], self.face_attr_mask[pi][0]:self.face_attr_mask[pi][1]], [new_size, new_size], mode='bilinear')
+            uv_texture_gt_patch = F.interpolate(uv_texture_gt[:, :, self.face_attr_mask[pi][2]:self.face_attr_mask[pi][3], self.face_attr_mask[pi][0]:self.face_attr_mask[pi][1]], [new_size, new_size], mode='bilinear')
             uv_vis_mask_patch = F.interpolate(uv_vis_mask[:, :, self.face_attr_mask[pi][2]:self.face_attr_mask[pi][3], self.face_attr_mask[pi][0]:self.face_attr_mask[pi][1]], [new_size, new_size], mode='bilinear')
             
-            #losses['photo_detail'] = (uv_texture_patch*uv_vis_mask_patch - uv_texture_gt_patch*uv_vis_mask_patch).abs().mean()*self.cfg.loss.photo_D
-            #losses['photo_detail_mrf'] = self.mrf_loss(uv_texture_patch*uv_vis_mask_patch, uv_texture_gt_patch*uv_vis_mask_patch)*self.cfg.loss.photo_D*self.cfg.loss.mrf
+            self.detail_losses['photo_detail'] = (uv_texture_patch*uv_vis_mask_patch - uv_texture_gt_patch*uv_vis_mask_patch).abs().mean()*self.cfg.loss.photo_D
+            self.detail_losses['photo_detail_mrf'] = self.mrf_loss(uv_texture_patch*uv_vis_mask_patch, uv_texture_gt_patch*uv_vis_mask_patch)*self.cfg.loss.photo_D*self.cfg.loss.mrf
 
             self.detail_losses['z_reg'] = torch.mean(uv_z.abs())*self.cfg.loss.reg_z
             self.detail_losses['z_diff'] = lossfunc.shading_smooth_loss(uv_shading)*self.cfg.loss.reg_diff

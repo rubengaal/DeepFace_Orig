@@ -178,7 +178,7 @@ class CelebDataset(torch.utils.data.Dataset):
         cropped_kpt = np.dot(tform.params,np.hstack([raw_lm, np.ones([raw_lm.shape[0], 1])]).T).T  # np.linalg.inv(tform.params)
 
         # normalized kpt
-        cropped_kpt[:, :2] = cropped_kpt[:, :2] / self.width * 2 - 1 #image_size
+        #cropped_kpt[:, :2] = cropped_kpt[:, :2] / self.width * 2 - 1 #image_size
 
         img_tensor = torch.from_numpy(cropped_image.transpose(2,0,1)).type(dtype = torch.float32) #224,224,3
 
@@ -243,3 +243,5 @@ class CelebDataset(torch.utils.data.Dataset):
         # # change kpt accordingly
         # cropped_kpt = np.dot(tform.params, np.hstack([kpt, np.ones([kpt.shape[0],1])]).T).T # np.linalg.inv(tform.params)
         return tform
+
+
