@@ -91,17 +91,16 @@ class UNetDataset(torch.utils.data.Dataset):
         self.test_mode = test_mode
 
         if self.train:
-            landmark_filename = root+'../train_landmarks.csv'
+            landmark_filename = root+'200k-landmarks-celeba/train_landmarks.csv'
         else:
-            landmark_filename = root+'../val_landmarks.csv'
+            landmark_filename = root+'200k-landmarks-celeba/val_landmarks.csv'
         if self.test_mode:
             self.train = False
             if landmark_file:
                 landmark_filename = landmark_file
             else:
-                landmark_filename = root+'..\\test_landmarks.csv'
-        current_path = os.getcwd()
-        self.root = current_path + '\\image_root\\Data\\Dataset\\'
+                landmark_filename = root+'200k-landmarks-celeba/test_landmarks.csv'
+        self.root = root + 'img_align_celeba/img_align_celeba/'
         print(landmark_filename)
         f=open(landmark_filename)
         f_csv=csv.reader(f,delimiter=',')
@@ -123,8 +122,10 @@ class UNetDataset(torch.utils.data.Dataset):
     def __getitem__(self,index):
 
         global filename
+        global mask_filename
         try:
             filename = self.root+self.landmark_list[index][0]
+            mask_filename = 'D:/OE/szakdolgozat/celeba/celeba/visible_skin_masks/' + self.landmark_list[index][0]
             #filename = "C:\\Users\\xpand\\Desktop\\Workspace\\Occlusion-Robust-MoFA\\MoFA_UNet_Save\\UNet_trainset\\"+self.landmark_list[index][0].replace('.jpg','_org.jpg')
         except:
             pass
@@ -149,8 +150,8 @@ class UNetDataset(torch.utils.data.Dataset):
         
         _, img, lm, msk = align_img(raw_img, raw_lm, self.lm3d_std, mask=None)
             
-        skin_vis_mask_path = filename.replace('.jpg','_mask.jpg')
-        rastered_filename = filename.replace('.jpg','_rendered_images.jpg')
+        skin_vis_mask_path = mask_filename.replace('.jpg','_visible_skin_mask.png')
+        #rastered_filename = filename.replace('.jpg','_rendered_images.jpg')
         if os.path.exists(skin_vis_mask_path):
                 
             _,num_temp = os.path.split(filename)
@@ -159,10 +160,10 @@ class UNetDataset(torch.utils.data.Dataset):
             raw_gtmask = Image.open(skin_vis_mask_path).convert('RGB')
             _, gt_mask, _, _ = align_img(raw_gtmask, raw_lm, self.lm3d_std, mask=None)
                 
-            raw_raster = Image.open( rastered_filename).convert('RGB')
-            _, gt_raster, _, _ = align_img(raw_raster, raw_lm, self.lm3d_std, mask=None)
+            #raw_raster = Image.open( rastered_filename).convert('RGB')
+            #_, gt_raster, _, _ = align_img(raw_raster, raw_lm, self.lm3d_std, mask=None)
         else:
-            print('!Mask does not exist: '+filename)
+            print('!Mask does not exist: '+mask_filename)
             index+=1
             self.__getitem__(index+1)
         
@@ -171,27 +172,25 @@ class UNetDataset(torch.utils.data.Dataset):
 
         if aug_flag :
             msk=gt_mask
-            raster=gt_raster
-            img, lm, gt_mask , gt_raster= self._augmentation(img, lm, msk,raster)
+            #raster=gt_raster
+            img, lm, gt_mask= self._augmentation(img, lm, msk) #raster
         _, H = img.size
         transform = get_transform()
         img_tensor = transform(img).to(self.device)
 
-        gt_raster_tensor = transform(gt_raster)[:1, ...].to(self.device)
+        #gt_raster_tensor = transform(gt_raster)[:1, ...].to(self.device)
         gt_mask_tensor = transform(gt_mask)[:1, ...].to(self.device)
         
-        img_input = np.concatenate((img, gt_raster),axis=2)
+        img_input = np.concatenate((img, img),axis=2)
         IMAGE_INPUT = tf.to_tensor(img_input)
         IMAGE_INPUT = torch.flip(IMAGE_INPUT, [0]).to(self.device)
-        return IMAGE_INPUT, gt_mask_tensor,img_tensor,gt_raster_tensor
+        return IMAGE_INPUT, gt_mask_tensor,img_tensor
 
             
-    def _augmentation(self, img, lm,  msk=None,raster=None):
+    def _augmentation(self, img, lm,  msk=None):
         affine, affine_inv, flip = get_affine_mat()
         img = apply_img_affine(img, affine_inv)
         lm = apply_lm_affine(lm, affine, flip, img.size)
         if msk is not None:
             msk = apply_img_affine(msk, affine_inv, method=Image.BILINEAR)
-        if raster is not None:
-            aug_raster = apply_img_affine(raster, affine_inv, method=Image.BILINEAR)
-        return img, lm, msk,aug_raster
+        return img, lm, msk

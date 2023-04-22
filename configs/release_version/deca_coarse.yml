@@ -1,15 +1,15 @@
-output_dir: "C:/Users/xpand/Desktop/Workspace/DeepFace_Orig/pretrain"
-pretrained_modelpath: "C:/Users/xpand/Desktop/Workspace/DeepFace_Orig/pretrain/model.tar"
+output_dir: "D:/Dev/repos/deepcheap/DeepFace_Orig/pretrain"
+pretrained_modelpath: "D:/Dev/repos/deepcheap/DeepFace_Orig/pretrain/model-pretrain-30k-steps.tar"
 dataset:
-  batch_size: 2
+  batch_size: 4
   K: 1
 train:
   resume: True
   max_epochs: 10
-  max_steps: 200000
+  max_steps: 90000
   log_steps: 10
   vis_steps: 500
-  checkpoint_steps: 1
+  checkpoint_steps: 1000
   val_steps: 500
   eval_steps: 1000
 

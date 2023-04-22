@@ -15,7 +15,8 @@ import math
 from tqdm import tqdm
 import torch.optim as optim
 from torch.utils.data import DataLoader
-import util.util as util
+import util.util as focus_util
+import decalib.utils.util as deca_util
 import csv
 import util.load_object as lob
 import renderer.rendering as ren
@@ -45,7 +46,7 @@ par = argparse.ArgumentParser(description='MoFA')
 
 par.add_argument('--learning_rate', default=0.1, type=float, help='The learning rate')
 par.add_argument('--epochs', default=1, type=int, help='Total epochs')
-par.add_argument('--batch_size', default=1, type=int, help='Batch sizes')
+par.add_argument('--batch_size', default=4, type=int, help='Batch sizes')
 par.add_argument('--gpu', default=0, type=int, help='The GPU ID')
 par.add_argument('--pretrained_model', default=00, type=int, help='Pretrained model')
 par.add_argument('--img_path', type=str, default='image_root/Data/Dataset', help='Root of the training samples')
@@ -230,8 +231,8 @@ def proc_mofaunet(batch, images, landmarks, render_mode, train_net=False, occlus
 load pretrained model and continue training
 -----------------------------------------'''
 
-unet_model_path = current_path + '\\MoFA_UNet_Save\\Pretrain_UNet' + '\\unet_mask_000070.model'
-unet_for_mask = torch.load(unet_model_path, map_location='cuda:{}'.format(util.device_ids[GPU_no]))
+unet_model_path = current_path + '\\MoFA_UNet_Save\\Pretrain_UNet' + '\\unet_mask_135610.model'
+unet_for_mask = torch.load(unet_model_path, map_location='cuda:{}'.format(focus_util.device_ids[GPU_no]))
 
 print('Loading pre-trained unet: \n' + unet_model_path)
 
@@ -258,7 +259,7 @@ for epoch in range(start_epoch, trainer.cfg.train.max_epochs):
         '''-------------------------
         Model Training
         --------------------------'''
-        if trainer.global_step % 10 > 5:
+        if trainer.global_step % 6000 < 5000:
             unet_for_mask.eval()
             codedict = deca.encode(batch['image'].cuda())
             opdict, visdict = deca.decode(codedict)  # tensor
@@ -305,9 +306,9 @@ for epoch in range(start_epoch, trainer.cfg.train.max_epochs):
             shape_images = trainer.deca.render.render_shape(opdict['verts'][visind], opdict['trans_verts'][visind])
             visdict = {
                 'inputs': opdict['images'][visind],
-                'landmarks2d_gt': util.tensor_vis_landmarks(opdict['images'][visind], opdict['lmk'][visind],
+                'landmarks2d_gt': deca_util.tensor_vis_landmarks(opdict['images'][visind], opdict['lmk'][visind],
                                                             isScale=True),
-                'landmarks2d': util.tensor_vis_landmarks(opdict['images'][visind], opdict['landmarks2d'][visind],
+                'landmarks2d': deca_util.tensor_vis_landmarks(opdict['images'][visind], opdict['landmarks2d'][visind],
                                                          isScale=True),
                 'shape_images': shape_images,
             }
@@ -316,7 +317,7 @@ for epoch in range(start_epoch, trainer.cfg.train.max_epochs):
             if 'predicted_detail_images' in opdict.keys():
                 visdict['predicted_detail_images'] = opdict['predicted_detail_images'][visind]
             savepath = os.path.join(trainer.cfg.output_dir, trainer.cfg.train.vis_dir, f'{trainer.global_step:06}.jpg')
-            grid_image = util.visualize_grid(visdict, savepath, return_gird=True)
+            grid_image = deca_util.visualize_grid(visdict, savepath, return_gird=True)
             trainer.writer.add_image('deca_train_images', (grid_image / 255.).astype(np.float32).transpose(2, 0, 1),
                                      trainer.global_step)
         '''-------------------------

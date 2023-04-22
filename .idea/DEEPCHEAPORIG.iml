@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <module type="PYTHON_MODULE" version="4">
   <component name="NewModuleRootManager">
-    <content url="file://$MODULE_DIR$" />
+    <content url="file://$MODULE_DIR$">
+      <excludeFolder url="file://$MODULE_DIR$/MoFA_UNet_Save" />
+      <excludeFolder url="file://$MODULE_DIR$/decalib/pretrain" />
+      <excludeFolder url="file://$MODULE_DIR$/pretrain" />
+      <excludeFolder url="file://$MODULE_DIR$/image_root" />
+    </content>
     <orderEntry type="jdk" jdkName="deepcheap_1" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>

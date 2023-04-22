@@ -24,7 +24,7 @@ par.add_argument('--epochs',default=10,type=int,help='Total epochs')
 par.add_argument('--batch_size',default=12,type=int,help='Batch sizes')
 par.add_argument('--gpu',default=0,type=int,help='The GPU ID')
 par.add_argument('--pretrained_model_train',default=0,type=int,help='Pretrained model')
-par.add_argument('--img_path',type=str,default='image_root/Data/',help='Root of the training samples')
+par.add_argument('--img_path',type=str,default='D:/OE/szakdolgozat/celeba/celeba/img_align_celeba/img_align_celeba/',help='Root of the training samples')
 
 current_path = os.getcwd()
 
@@ -49,21 +49,21 @@ height = 224
 #load images
 ----------------'''
 
-trainset = load_dataset.UNetDataset(device,'image_root/Data/Dataset/', True,height,width,1)
+trainset = load_dataset.UNetDataset(device,'D:/OE/szakdolgozat/celeba/celeba/', True,height,width,1)
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch,shuffle=True, num_workers=0)
 
-testset = load_dataset.UNetDataset(device,'image_root/Data/Dataset/',False,height,width,1)
+testset = load_dataset.UNetDataset(device,'D:/OE/szakdolgozat/celeba/celeba/',False,height,width,1)
 testloader = torch.utils.data.DataLoader(testset, batch_size=batch,shuffle=False, num_workers=0)
 
 images_org_test = []
 images_mask_test = []
 images_rasters_test = []
 images_input = []
-test_batch_num = 3
+test_batch_num = 10
 for i_test, data_test in enumerate(testloader, 0):
 	if i_test >= test_batch_num:
 		break
-	inputs_test, masks_test, orgs_test, rasters_test= data_test
+	inputs_test, masks_test, orgs_test = data_test
 	images_mask_test += [masks_test]
 	images_input += [inputs_test] 
 util.write_tiled_image(torch.cat(images_mask_test,dim=0), output_path + 'test_mask_gt.png',10)
@@ -134,7 +134,7 @@ for ep in tqdm(range(0,epoch)):
 				mean_test_losses = torch.zeros([1])
 				unet_mask.eval()
 				for i_test, data_test in enumerate(testloader,0):
-					image_input_temp, mask_gt_temp, _, _ = data_test
+					image_input_temp, mask_gt_temp, _ = data_test
 					c_test+=1
 					with torch.no_grad():
                         
@@ -156,7 +156,7 @@ for ep in tqdm(range(0,epoch)):
 
 		#Training
 		unet_mask.train()
-		image_train, mask_gt_train, _,_ = data
+		image_train, mask_gt_train, _= data
 
 		if image_train.shape[0]!=batch:
 			continue

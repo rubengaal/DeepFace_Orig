@@ -106,19 +106,19 @@ class CelebDataset(torch.utils.data.Dataset):
         # Set is_use_aug as True if data augmentation is required during training.
         self.use_aug = is_use_aug
         self.trans_scale = trans_scale
-        self.root = 'image_root/Data/Dataset/'
+        self.root = 'D:/OE/szakdolgozat/celeba/celeba/img_align_celeba/img_align_celeba/' #'image_root/Data/Dataset/'
 
         # Get landmark files
         if self.train:
-            landmark_filename = self.root + '../train_landmarks.csv'
+            landmark_filename = 'D:/OE/szakdolgozat/celeba/celeba/train_landmarks.csv' # self.root + '../train_landmarks.csv'
         else:
-            landmark_filename = self.root + '../val_landmarks.csv'
+            landmark_filename = 'D:/OE/szakdolgozat/celeba/celeba/val_landmarks.csv'# self.root + '../val_landmarks.csv'
         if self.test_mode:
             self.train = False
             if landmark_file:
                 landmark_filename = landmark_file
             else:
-                landmark_filename = self.root + '../test_landmarks.csv'
+                landmark_filename = 'D:/OE/szakdolgozat/celeba/celeba/test_landmarks.csv'# self.root + '../test_landmarks.csv'
         if 'NoWDataset' in self.root:
             landmark_filename = self.root + 'nowchallenge_landmarks.csv'
         print('Dataset:' + landmark_filename)
