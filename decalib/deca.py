@@ -14,6 +14,8 @@
 # For commercial licensing contact, please contact ps-license@tuebingen.mpg.de
 
 import os, sys
+
+import face_alignment
 import torch
 import torchvision
 import torch.nn.functional as F
@@ -48,6 +50,7 @@ class DECA(nn.Module):
 
         self._create_model(self.cfg.model)
         self._setup_renderer(self.cfg.model)
+        self.fa = face_alignment.FaceAlignment(face_alignment.LandmarksType._2D, device='cuda')
 
     def _setup_renderer(self, model_cfg):
         set_rasterizer(type='standard')
@@ -161,9 +164,12 @@ class DECA(nn.Module):
                 render_orig=False, original_image=None, tform=None):
         images = codedict['images']
         batch_size = images.shape[0]
+
+        transform = torchvision.transforms.ToPILImage()
         
         ## decode
         verts, landmarks2d, landmarks3d = self.flame(shape_params=codedict['shape'], expression_params=codedict['exp'], pose_params=codedict['pose'])
+
         if self.cfg.model.use_tex:
             albedo = self.flametex(codedict['tex'])
         else:

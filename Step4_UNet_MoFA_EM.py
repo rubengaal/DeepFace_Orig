@@ -66,6 +66,7 @@ ct = args.pretrained_model  # load trained mofa model
 deca = DECA(cfg)
 trainer = Trainer(model=deca, config=cfg)
 
+
 output_name = 'Deca_UNet'
 
 device = torch.device("cuda:0") if torch.cuda.is_available() else "cpu"
@@ -231,7 +232,7 @@ def proc_mofaunet(batch, images, landmarks, render_mode, train_net=False, occlus
 load pretrained model and continue training
 -----------------------------------------'''
 
-unet_model_path = current_path + '\\MoFA_UNet_Save\\Pretrain_UNet' + '\\unet_mask_135610.model'
+unet_model_path = current_path + '\\MoFA_UNet_Save\\Pretrain_UNet' + '\\00180000_unet.tar'
 unet_for_mask = torch.load(unet_model_path, map_location='cuda:{}'.format(focus_util.device_ids[GPU_no]))
 
 print('Loading pre-trained unet: \n' + unet_model_path)
@@ -357,7 +358,6 @@ for epoch in range(start_epoch, trainer.cfg.train.max_epochs):
                 loss_info = loss_info + f'{k}: {v:.4f}, '
                 trainer.writer.add_scalar('unet_val_loss/' + k, v, global_step=trainer.global_step)
             logger.info(loss_info)
-
 
         if trainer.global_step % 5000 == 0:
             trainer.evaluate()

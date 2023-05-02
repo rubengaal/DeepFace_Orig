@@ -13,6 +13,8 @@ cfg.deca_dir = abs_deca_dir
 cfg.device = 'cuda'
 cfg.device_id = '0'
 
+cfg.exp_name = 'detail'
+
 cfg.pretrained_modelpath = os.path.join(cfg.deca_dir, 'pretrain', 'model.tar') #deepcheap.tar model-pretrain-30k-steps.tar
 cfg.output_dir = os.path.join(cfg.deca_dir, 'pretrain')
 cfg.rasterizer_type = 'standard'
@@ -57,7 +59,7 @@ cfg.dataset.training_data = ['celeba']
 # cfg.dataset.training_data = ['ethnicity']
 cfg.dataset.eval_data = ['celeba']
 cfg.dataset.test_data = ['celeba']
-cfg.dataset.batch_size = 4
+cfg.dataset.batch_size = 1
 cfg.dataset.K = 1
 cfg.dataset.isSingle = False
 cfg.dataset.num_workers = 1
@@ -70,10 +72,10 @@ cfg.dataset.trans_scale = 0.
 # Options for training
 # ---------------------------------------------------------------------------- #
 cfg.train = CN()
-cfg.train.train_detail = False
+cfg.train.train_detail = True
 cfg.train.train_unet = True
 cfg.train.max_epochs = 10
-cfg.train.max_steps = 180000
+cfg.train.max_steps = 1800000
 cfg.train.lr = 1e-4
 cfg.train.log_dir = 'logs'
 cfg.train.log_steps = 10

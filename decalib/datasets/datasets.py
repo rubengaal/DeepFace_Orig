@@ -14,7 +14,14 @@
 # For commercial licensing contact, please contact ps-license@tuebingen.mpg.de
 
 import os, sys
+
+import face_alignment
+import pandas as pd
 import torch
+import torchvision.transforms.functional as fn
+import torchvision.transforms
+from matplotlib import pyplot as plt
+from skimage import transform, io
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
 import numpy as np
@@ -24,8 +31,10 @@ from skimage.io import imread, imsave
 from skimage.transform import estimate_transform, warp, resize, rescale
 from glob import glob
 import scipy.io
+from torchvision import utils
 
-from . import detectors
+from decalib.datasets import detectors
+
 
 def video2sequence(video_path, sample_step=10):
     videofolder = os.path.splitext(video_path)[0]
@@ -46,98 +55,208 @@ def video2sequence(video_path, sample_step=10):
     return imagepath_list
 
 class TestData(Dataset):
-    def __init__(self, testpath, iscrop=True, crop_size=224, scale=1.25, face_detector='fan', sample_step=10):
-        '''
-            testpath: folder, imagepath_list, image path, video path
-        '''
-        if isinstance(testpath, list):
-            self.imagepath_list = testpath
-        elif os.path.isdir(testpath): 
-            self.imagepath_list = glob(testpath + '/*.jpg') +  glob(testpath + '/*.png') + glob(testpath + '/*.bmp')
-        elif os.path.isfile(testpath) and (testpath[-3:] in ['jpg', 'png', 'bmp']):
-            self.imagepath_list = [testpath]
-        elif os.path.isfile(testpath) and (testpath[-3:] in ['mp4', 'csv', 'vid', 'ebm']):
-            self.imagepath_list = video2sequence(testpath, sample_step)
-        else:
-            print(f'please check the test path: {testpath}')
-            exit()
-        # print('total {} images'.format(len(self.imagepath_list)))
+
+    def __init__(self, transform=None):
+
+        self.root_dir = "D:/Dev/repos/deepcheap/DeepFace_Orig/TestSamples/examples"
+
+        self.imagepath_list = glob(self.root_dir + '/*.jpg') + glob(self.root_dir + '/*.png') + glob(self.root_dir + '/*.bmp')
         self.imagepath_list = sorted(self.imagepath_list)
-        self.crop_size = crop_size
-        self.scale = scale
-        self.iscrop = iscrop
-        self.resolution_inp = crop_size
-        if face_detector == 'fan':
-            self.face_detector = detectors.FAN()
-        # elif face_detector == 'mtcnn':
-        #     self.face_detector = detectors.MTCNN()
-        else:
-            print(f'please check the detector: {face_detector}')
-            exit()
+        self.transform = transform
+        self.facedet = face_alignment.FaceAlignment(face_alignment.LandmarksType._2D, device='cuda')
+
 
     def __len__(self):
         return len(self.imagepath_list)
 
-    def bbox2point(self, left, right, top, bottom, type='bbox'):
-        ''' bbox from detector and landmarks are different
-        '''
-        if type=='kpt68':
-            old_size = (right - left + bottom - top)/2*1.1
-            center = np.array([right - (right - left) / 2.0, bottom - (bottom - top) / 2.0 ])
-        elif type=='bbox':
-            old_size = (right - left + bottom - top)/2
-            center = np.array([right - (right - left) / 2.0, bottom - (bottom - top) / 2.0  + old_size*0.12])
-        else:
-            raise NotImplementedError
-        return old_size, center
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
 
-    def __getitem__(self, index):
-        imagepath = self.imagepath_list[index]
+        imagepath = self.imagepath_list[idx]
         imagename = os.path.splitext(os.path.split(imagepath)[-1])[0]
-        image = np.array(imread(imagepath))
-        if len(image.shape) == 2:
-            image = image[:,:,None].repeat(1,1,3)
-        if len(image.shape) == 3 and image.shape[2] > 3:
-            image = image[:,:,:3]
+        image = io.imread(imagepath)
+
+
+        landmarks = self.facedet.get_landmarks_from_image(image)
+        landmarks = np.array([landmarks])
+        landmarks = landmarks.astype('float').reshape(-1, 2)
+        sample = {'image': image, 'landmark': landmarks}
+
+        if self.transform:
+            sample = self.transform(sample)
+
+        return sample
+
+
+class Rescale(object):
+    """Rescale the image in a sample to a given size.
+
+    Args:
+        output_size (tuple or int): Desired output size. If tuple, output is
+            matched to output_size. If int, smaller of image edges is matched
+            to output_size keeping aspect ratio the same.
+    """
+
+    def __init__(self, output_size):
+        assert isinstance(output_size, (int, tuple))
+        self.output_size = output_size
+
+    def __call__(self, sample):
+        image, landmarks = sample['image'], sample['landmark']
+
+        h, w = image.shape[:2]
+        if isinstance(self.output_size, int):
+            if h > w:
+                new_h, new_w = self.output_size * h / w, self.output_size
+            else:
+                new_h, new_w = self.output_size, self.output_size * w / h
+        else:
+            new_h, new_w = self.output_size
+
+        new_h, new_w = int(new_h), int(new_w)
+
+        img = transform.resize(image,  (new_h, new_w))
+
+        # h and w are swapped for landmarks because for images,
+        # x and y axes are axis 1 and 0 respectively
+        landmarks = landmarks * [new_w / w, new_h / h]
+
+        return {'image': img, 'landmark': landmarks}
+
+class RandomCrop(object):
+    """Crop randomly the image in a sample.
+
+    Args:
+        output_size (tuple or int): Desired output size. If int, square crop
+            is made.
+    """
+
+    def __init__(self, output_size):
+        self.scale = [1.4, 1.8]
+        self.trans_scale = 0.  # 0.5?
+        assert isinstance(output_size, (int, tuple))
+        if isinstance(output_size, int):
+            self.output_size = (output_size, output_size)
+        else:
+            assert len(output_size) == 2
+            self.output_size = output_size
+
+    def __call__(self, sample):
+        image, landmarks = sample['image'], sample['landmark']
+
+        # h, w = image.shape[:2]
+        # new_h, new_w = self.output_size
+        #
+        # top = np.random.randint(0, h - new_h)
+        # left = np.random.randint(0, w - new_w)
+        #
+        # image = image[top: top + new_h,
+        #               left: left + new_w]
+        #
+        # landmarks = landmarks - [left, top]
+
+        left = np.min(landmarks[:, 0]);
+        right = np.max(landmarks[:, 0]);
+        top = np.min(landmarks[:, 1]);
+        bottom = np.max(landmarks[:, 1])
 
         h, w, _ = image.shape
-        if self.iscrop:
-            # provide kpt as txt file, or mat file (for AFLW2000)
-            kpt_matpath = os.path.splitext(imagepath)[0]+'.mat'
-            kpt_txtpath = os.path.splitext(imagepath)[0]+'.txt'
-            if os.path.exists(kpt_matpath):
-                kpt = scipy.io.loadmat(kpt_matpath)['pt3d_68'].T        
-                left = np.min(kpt[:,0]); right = np.max(kpt[:,0]); 
-                top = np.min(kpt[:,1]); bottom = np.max(kpt[:,1])
-                old_size, center = self.bbox2point(left, right, top, bottom, type='kpt68')
-            elif os.path.exists(kpt_txtpath):
-                kpt = np.loadtxt(kpt_txtpath)
-                left = np.min(kpt[:,0]); right = np.max(kpt[:,0]); 
-                top = np.min(kpt[:,1]); bottom = np.max(kpt[:,1])
-                old_size, center = self.bbox2point(left, right, top, bottom, type='kpt68')
-            else:
-                bbox, bbox_type = self.face_detector.run(image)
-                if len(bbox) < 4:
-                    print('no face detected! run original image')
-                    left = 0; right = h-1; top=0; bottom=w-1
-                else:
-                    left = bbox[0]; right=bbox[2]
-                    top = bbox[1]; bottom=bbox[3]
-                old_size, center = self.bbox2point(left, right, top, bottom, type=bbox_type)
-            size = int(old_size*self.scale)
-            src_pts = np.array([[center[0]-size/2, center[1]-size/2], [center[0] - size/2, center[1]+size/2], [center[0]+size/2, center[1]-size/2]])
-        else:
-            src_pts = np.array([[0, 0], [0, h-1], [w-1, 0]])
-        
-        DST_PTS = np.array([[0,0], [0,self.resolution_inp - 1], [self.resolution_inp - 1, 0]])
-        tform = estimate_transform('similarity', src_pts, DST_PTS)
-        
-        image = image/255.
+        old_size = (right - left + bottom - top) / 2
+        center = np.array([right - (right - left) / 2.0, bottom - (bottom - top) / 2.0])  # + old_size*0.1])
+        trans_scale = (np.random.rand(2) * 2 - 1) * self.trans_scale
+        center = center + trans_scale * old_size  # 0.5
 
-        dst_image = warp(image, tform.inverse, output_shape=(self.resolution_inp, self.resolution_inp))
-        dst_image = dst_image.transpose(2,0,1)
-        return {'image': torch.tensor(dst_image).float(),
-                'imagename': imagename,
-                'tform': torch.tensor(tform.params).float(),
-                'original_image': torch.tensor(image.transpose(2,0,1)).float(),
+        scale = np.random.rand() * (self.scale[1] - self.scale[0]) + self.scale[0]
+
+        src_pts = np.array([[0, 0], [0, h - 1], [w - 1, 0]])
+        DST_PTS = np.array([[0, 0], [0, 224 - 1], [224 - 1, 0]])
+        tform = estimate_transform('similarity', src_pts, DST_PTS)
+
+        cropped_image = warp(image, tform.inverse, output_shape=(224, 224))
+        # # change kpt accordingly
+        cropped_kpt = np.dot(tform.params, np.hstack([landmarks, np.ones([landmarks.shape[0],1])]).T).T # np.linalg.inv(tform.params)
+        #cropped_kpt[:, :2] = cropped_kpt[:, :2] / 224 * 2 - 1  # image_size
+
+        return {'image': cropped_image, 'landmark': cropped_kpt}
+
+
+
+
+class ToTensor(object):
+    """Convert ndarrays in sample to Tensors."""
+
+    def __call__(self, sample):
+        image, landmark = sample['image'], sample['landmark']
+
+        # swap color axis because
+        # numpy image: H x W x C
+        # torch image: C x H x W
+        image = image.transpose((2, 0, 1))
+
+        return {'image': torch.from_numpy(image).type(dtype=torch.float32),
+                'landmark': torch.from_numpy(landmark).type(dtype=torch.float32),
                 }
+
+class Normalize(object):
+    """Convert ndarrays in sample to Tensors."""
+
+    def __call__(self, sample):
+        image, landmark = sample['image'], sample['landmark']
+
+        mean = [0.5063, 0.4258, 0.3837]
+        std = [0.2676, 0.2565, 0.2627]
+
+        image = image.astype(np.float32) / 255.0
+        image = (image - mean) / std
+
+        return {'image': image,
+                'landmark': landmark,
+                }
+
+
+def show_landmarks(image, landmarks):
+    """Show image with landmarks"""
+    plt.imshow(image)
+    plt.scatter(landmarks[:, 0], landmarks[:, 1], s=10, marker='.', c='r')
+    plt.pause(0.001)  # pause a bit so that plots are updated
+
+
+def show_landmarks_batch(sample_batched):
+    """Show image with landmarks for a batch of samples."""
+    images_batch, landmarks_batch = \
+        sample_batched['image'], sample_batched['landmark']
+    batch_size = len(images_batch)
+    im_size = images_batch.size(2)
+    grid_border_size = 2
+
+    grid = utils.make_grid(images_batch)
+    plt.imshow(grid.numpy().transpose((1, 2, 0)))
+
+    for i in range(batch_size):
+        plt.scatter(landmarks_batch[i, :, 0].numpy() + i * im_size + (i + 1) * grid_border_size,
+                    landmarks_batch[i, :, 1].numpy() + grid_border_size,
+                    s=10, marker='.', c='r')
+
+        plt.title('Batch from dataloader')
+
+
+if __name__ == '__main__':
+    transformed_dataset = TestData( transform=transforms.Compose(
+        [Normalize(), Rescale(224), RandomCrop(224), ToTensor()]))
+
+    dataloader = DataLoader(transformed_dataset, batch_size=4,
+                            shuffle=True, num_workers=0, drop_last=True)
+
+    train_iter = iter(dataloader)
+
+
+    sample_batched = next(train_iter)
+    print(sample_batched['image'].size(),
+          sample_batched['landmark'].size())
+    # observe 4th batch and stop.
+    plt.figure()
+    show_landmarks_batch(sample_batched)
+    plt.axis('off')
+    plt.ioff()
+    plt.show()

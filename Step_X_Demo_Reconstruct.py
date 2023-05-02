@@ -19,8 +19,13 @@ import numpy as np
 from time import time
 from scipy.io import savemat
 import argparse
+
+from torch.utils.data import DataLoader
+from torchvision.transforms import transforms
 from tqdm import tqdm
 import torch
+
+from decalib.datasets.datasets import Rescale, RandomCrop, ToTensor, Normalize
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from decalib.deca import DECA
@@ -28,6 +33,7 @@ from decalib.datasets import datasets
 from decalib.utils import util
 from decalib.utils.config import cfg as deca_cfg
 from decalib.utils.tensor_cropper import transform_points
+from decalib.datasets import now
 
 
 def main(args):
@@ -39,27 +45,25 @@ def main(args):
     os.makedirs(savefolder, exist_ok=True)
 
     # load test images
-    testdata = datasets.TestData(args.inputpath, iscrop=args.iscrop, face_detector=args.detector,
-                                 sample_step=args.sample_step)
+    testdata = datasets.TestData(transform=transforms.Compose(
+         [Rescale(224), RandomCrop(224), ToTensor()]))
+
+    #testdata = now.NoWDataset(scale=2.5) #1.6
 
     # run DECA
     deca_cfg.model.use_tex = args.useTex
     deca_cfg.rasterizer_type = args.rasterizer_type
     deca_cfg.model.extract_tex = args.extractTex
     deca = DECA(config=deca_cfg, device=device)
-    # for i in range(len(testdata)):
+
+    # for i in range(len(testdata))::
     for i in tqdm(range(len(testdata))):
-        name = testdata[i]['imagename']
-        images = testdata[i]['image'].to(device)[None, ...]
+        name =f'test{i:04d}' #testdata[i]['imagename']
+        images = testdata[i]['image'].to(device)
+        images = images.view(-1, images.shape[-3], images.shape[-2], images.shape[-1])
         with torch.no_grad():
             codedict = deca.encode(images)
-            opdict, visdict = deca.decode(codedict)  # tensor
-            if args.render_orig:
-                tform = testdata[i]['tform'][None, ...]
-                tform = torch.inverse(tform).transpose(1, 2).to(device)
-                original_image = testdata[i]['original_image'][None, ...].to(device)
-                _, orig_visdict = deca.decode(codedict, render_orig=True, original_image=original_image, tform=tform)
-                orig_visdict['inputs'] = original_image
+            opdict, visdict = deca.decode(codedict=codedict)
 
         if args.saveDepth or args.saveKpt or args.saveObj or args.saveMat or args.saveImages:
             os.makedirs(os.path.join(savefolder, name), exist_ok=True)
@@ -79,7 +83,7 @@ def main(args):
         if args.saveVis:
             cv2.imwrite(os.path.join(savefolder, name + '_vis.jpg'), deca.visualize(visdict))
             if args.render_orig:
-                cv2.imwrite(os.path.join(savefolder, name + '_vis_original_size.jpg'), deca.visualize(orig_visdict))
+                cv2.imwrite(os.path.join(savefolder, name + '_vis_original_size.jpg'), deca.visualize(visdict))
         if args.saveImages:
             for vis_name in ['inputs', 'rendered_images', 'albedo_images', 'shape_images', 'shape_detail_images','landmarks2d']:
                 if vis_name not in visdict.keys():
@@ -88,9 +92,9 @@ def main(args):
                 cv2.imwrite(os.path.join(savefolder, name, name + '_' + vis_name + '.jpg'),
                             util.tensor2image(visdict[vis_name][0]))
                 if args.render_orig:
-                    image = util.tensor2image(orig_visdict[vis_name][0])
+                    image = util.tensor2image(visdict[vis_name][0])
                     cv2.imwrite(os.path.join(savefolder, name, 'orig_' + name + '_' + vis_name + '.jpg'),
-                                util.tensor2image(orig_visdict[vis_name][0]))
+                                util.tensor2image(visdict[vis_name][0]))
     print(f'-- please check the results in {savefolder}')
 
 
@@ -113,7 +117,7 @@ if __name__ == '__main__':
     # rendering option
     parser.add_argument('--rasterizer_type', default='standard', type=str,
                         help='rasterizer type: pytorch3d or standard')
-    parser.add_argument('--render_orig', default=True, type=lambda x: x.lower() in ['true', '1'],
+    parser.add_argument('--render_orig', default=False, type=lambda x: x.lower() in ['true', '1'],
                         help='whether to render results in original image size, currently only works when rasterizer_type=standard')
     # save
     parser.add_argument('--useTex', default=True, type=lambda x: x.lower() in ['true', '1'],

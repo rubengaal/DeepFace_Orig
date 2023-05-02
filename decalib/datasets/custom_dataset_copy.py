@@ -2,7 +2,6 @@ from __future__ import print_function, division
 import os
 import torch
 import pandas as pd
-from PIL import Image
 from skimage import io, transform
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,7 +10,6 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
 from decalib.utils.config import cfg
 from decalib.datasets.CelebA import CelebDataset
-from facenet_pytorch import MTCNN, InceptionResnetV1
 
 
 class FaceLandmarksDataset(Dataset):
@@ -129,41 +127,41 @@ class RandomCrop(object):
     def __call__(self, sample):
         image, landmarks, mask = sample['image'], sample['landmark'], sample['mask']
 
-        # h, w = image.shape[:2]
-        # new_h, new_w = self.output_size
+        h, w = image.shape[:2]
+        new_h, new_w = self.output_size
+
+        top = np.random.randint(0, h - new_h)
+        left = np.random.randint(0, w - new_w)
+
+        image = image[top: top + new_h,
+                      left: left + new_w]
+
+        landmarks = landmarks - [left, top]
+
+        # left = np.min(landmarks[:, 0]);
+        # right = np.max(landmarks[:, 0]);
+        # top = np.min(landmarks[:, 1]);
+        # bottom = np.max(landmarks[:, 1])
         #
-        # top = np.random.randint(0, h - new_h)
-        # left = np.random.randint(0, w - new_w)
+        # h, w, _ = image.shape
+        # old_size = (right - left + bottom - top) / 2
+        # center = np.array([right - (right - left) / 2.0, bottom - (bottom - top) / 2.0])  # + old_size*0.1])
+        # trans_scale = (np.random.rand(2) * 2 - 1) * self.trans_scale
+        # center = center + trans_scale * old_size  # 0.5
         #
-        # image = image[top: top + new_h,
-        #               left: left + new_w]
+        # scale = np.random.rand() * (self.scale[1] - self.scale[0]) + self.scale[0]
         #
-        # landmarks = landmarks - [left, top]
+        # src_pts = np.array([[0, 0], [0, h - 1], [w - 1, 0]])
+        # DST_PTS = np.array([[0, 0], [0, 224 - 1], [224 - 1, 0]])
+        # tform = estimate_transform('similarity', src_pts, DST_PTS)
 
-        left = np.min(landmarks[:, 0]);
-        right = np.max(landmarks[:, 0]);
-        top = np.min(landmarks[:, 1]);
-        bottom = np.max(landmarks[:, 1])
+        # cropped_image = warp(image, tform.inverse, output_shape=(224, 224))
+        # cropped_mask = warp(mask, tform.inverse, output_shape=(224,224))
+        # # # change kpt accordingly
+        # cropped_kpt = np.dot(tform.params, np.hstack([landmarks, np.ones([landmarks.shape[0],1])]).T).T # np.linalg.inv(tform.params)
+        # cropped_kpt[:, :2] = cropped_kpt[:, :2] / 224 * 2 - 1  # image_size
 
-        h, w, _ = image.shape
-        old_size = (right - left + bottom - top) / 2
-        center = np.array([right - (right - left) / 2.0, bottom - (bottom - top) / 2.0])  # + old_size*0.1])
-        trans_scale = (np.random.rand(2) * 2 - 1) * self.trans_scale
-        center = center + trans_scale * old_size  # 0.5
-
-        scale = np.random.rand() * (self.scale[1] - self.scale[0]) + self.scale[0]
-
-        src_pts = np.array([[0, 0], [0, h - 1], [w - 1, 0]])
-        DST_PTS = np.array([[0, 0], [0, 224 - 1], [224 - 1, 0]])
-        tform = estimate_transform('similarity', src_pts, DST_PTS)
-
-        cropped_image = warp(image, tform.inverse, output_shape=(224, 224))
-        cropped_mask = warp(mask, tform.inverse, output_shape=(224,224))
-        # # change kpt accordingly
-        cropped_kpt = np.dot(tform.params, np.hstack([landmarks, np.ones([landmarks.shape[0],1])]).T).T # np.linalg.inv(tform.params)
-        cropped_kpt[:, :2] = cropped_kpt[:, :2] / 224 * 2 - 1  # image_size
-
-        return {'image': cropped_image, 'landmark': cropped_kpt, 'mask': cropped_mask}
+        return {'image': image, 'landmark': landmarks, 'mask': image}
 
 
 class ToTensor(object):
@@ -231,9 +229,3 @@ if __name__ == '__main__':
         plt.ioff()
         plt.show()
         break
-
-    # mtcnn = MTCNN(image_size= 224, min_face_size=1)
-    # image = Image.open('D:/Dev/repos/deepcheap/DeepFace_Orig/image_root/Data/NoW_Dataset/final_release_version/iphone_pictures/FaMoS_180424_03335_TA/multiview_neutral/IMG_0045.jpg')
-    # img_cropped = mtcnn(image)
-    # plt.imshow(img_cropped.permute(1,2,0))
-    # plt.show()

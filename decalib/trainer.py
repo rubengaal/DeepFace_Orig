@@ -393,7 +393,7 @@ class Trainer(object):
                             pin_memory=True,
                             drop_last=True)
         self.train_iter = iter(self.train_dataloader)
-        self.val_dataloader = DataLoader(self.val_dataset, batch_size=8, shuffle=True,
+        self.val_dataloader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=True,
                             num_workers=0,
                             pin_memory=True,
                             drop_last=False)

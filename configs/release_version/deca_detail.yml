@@ -1,8 +1,9 @@
 output_dir: "D:/Dev/repos/deepcheap/DeepFace_Orig/pretrain"
 pretrained_modelpath: "D:/Dev/repos/deepcheap/DeepFace_Orig/pretrain/model.tar"
 dataset:
-  batch_size: 6
-  K: 3
+  batch_size: 1
+  training_data: ['celeba']
+  K: 1
 train:
   train_detail: True
   resume: True
@@ -13,6 +14,5 @@ train:
   checkpoint_steps: 1000
   val_steps: 500
   eval_steps: 1000
-dataset:
-  training_data: ['celeba']
+
 # python main_train_deca_release.py --cfg configs/release_version/deca_detail.yml
